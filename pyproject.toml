@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pymtcnn"
-version = "1.0.0"
-description = "High-performance MTCNN face detection optimized for Apple Neural Engine"
+version = "1.1.0"
+description = "High-performance cross-platform MTCNN face detection with CUDA and Apple Neural Engine support"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "CC BY-NC 4.0"}
@@ -37,10 +37,22 @@ classifiers = [
 dependencies = [
     "numpy>=1.20.0",
     "opencv-python>=4.5.0",
-    "coremltools>=7.0",
 ]
 
 [project.optional-dependencies]
+coreml = [
+    "coremltools>=7.0",
+]
+onnx = [
+    "onnxruntime>=1.16.0",
+]
+onnx-gpu = [
+    "onnxruntime-gpu>=1.16.0",
+]
+all = [
+    "coremltools>=7.0",
+    "onnxruntime-gpu>=1.16.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pillow>=9.0.0",
@@ -56,8 +68,8 @@ Repository = "https://github.com/johnwilsoniv/pymtcnn"
 "Bug Tracker" = "https://github.com/johnwilsoniv/pymtcnn/issues"
 
 [tool.setuptools]
-packages = ["pymtcnn"]
+packages = ["pymtcnn", "pymtcnn.backends"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-pymtcnn = ["models/**/*"]
+pymtcnn = ["models/**/*", "models/*.onnx"]
