@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pymtcnn"
+version = "1.0.0"
+description = "High-performance MTCNN face detection optimized for Apple Neural Engine"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "CC BY-NC 4.0"}
+authors = [
+    {name = "SplitFace"}
+]
+keywords = [
+    "face detection",
+    "mtcnn",
+    "coreml",
+    "apple neural engine",
+    "computer vision",
+    "deep learning",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: MacOS",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "opencv-python>=4.5.0",
+    "coremltools>=7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pillow>=9.0.0",
+    "matplotlib>=3.5.0",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/PyMTCNN"
+Documentation = "https://github.com/your-org/PyMTCNN/blob/main/README.md"
+Repository = "https://github.com/your-org/PyMTCNN"
+"Bug Tracker" = "https://github.com/your-org/PyMTCNN/issues"
+
+[tool.setuptools]
+packages = ["pymtcnn"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+pymtcnn = ["models/**/*"]
