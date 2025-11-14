@@ -16,7 +16,6 @@ All accuracy-critical logic PRESERVED:
 
 import numpy as np
 import cv2
-from cpp_cnn_loader_optimized import CPPCNN
 import os
 
 
@@ -24,6 +23,15 @@ class PurePythonMTCNN_Optimized:
     """Optimized Pure Python CNN MTCNN"""
 
     def __init__(self, model_dir=None):
+        # Lazy import to avoid dependency when using CoreML/ONNX backends
+        try:
+            from .cpp_cnn_loader_optimized import CPPCNN
+        except ImportError:
+            raise ImportError(
+                "cpp_cnn_loader_optimized is required for base MTCNN. "
+                "Use CoreMLMTCNN or ONNXMTCNN instead."
+            )
+
         if model_dir is None:
             model_dir = os.path.expanduser(
                 "~/repo/fea_tool/external_libs/openFace/OpenFace/matlab_version/"

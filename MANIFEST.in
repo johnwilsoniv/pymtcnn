@@ -15,6 +15,9 @@ recursive-include pymtcnn/models *.mlmodel
 recursive-include pymtcnn/models *.bin
 recursive-include pymtcnn/models Manifest.json
 
+# Include ONNX models
+include pymtcnn/models/*.onnx
+
 # Exclude compiled Python files
 global-exclude __pycache__
 global-exclude *.py[cod]
