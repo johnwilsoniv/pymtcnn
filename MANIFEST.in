@@ -1,0 +1,22 @@
+# Include documentation
+include README.md
+include LICENSE
+include requirements.txt
+
+# Include documentation folder
+recursive-include docs *.md
+
+# Include examples
+recursive-include examples *.py
+
+# Include CoreML models (all files in .mlpackage bundles)
+recursive-include pymtcnn/models *.mlpackage/*
+recursive-include pymtcnn/models *.mlmodel
+recursive-include pymtcnn/models *.bin
+recursive-include pymtcnn/models Manifest.json
+
+# Exclude compiled Python files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store
