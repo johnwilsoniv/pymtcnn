@@ -15,7 +15,7 @@ setup(
     description="High-performance MTCNN face detection optimized for Apple Neural Engine",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/your-org/PyMTCNN",
+    url="https://github.com/johnwilsoniv/pymtcnn",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 5 - Production/Stable",

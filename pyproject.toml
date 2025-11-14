@@ -50,10 +50,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/PyMTCNN"
-Documentation = "https://github.com/your-org/PyMTCNN/blob/main/README.md"
-Repository = "https://github.com/your-org/PyMTCNN"
-"Bug Tracker" = "https://github.com/your-org/PyMTCNN/issues"
+Homepage = "https://github.com/johnwilsoniv/pymtcnn"
+Documentation = "https://github.com/johnwilsoniv/pymtcnn/blob/main/README.md"
+Repository = "https://github.com/johnwilsoniv/pymtcnn"
+"Bug Tracker" = "https://github.com/johnwilsoniv/pymtcnn/issues"
 
 [tool.setuptools]
 packages = ["pymtcnn"]
