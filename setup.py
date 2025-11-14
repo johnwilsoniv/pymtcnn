@@ -10,9 +10,9 @@ long_description = (this_directory / "README.md").read_text() if (this_directory
 
 setup(
     name="pymtcnn",
-    version="1.0.0",
+    version="1.1.0",
     author="SplitFace",
-    description="High-performance MTCNN face detection optimized for Apple Neural Engine",
+    description="High-performance cross-platform MTCNN face detection with CUDA and Apple Neural Engine support",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/johnwilsoniv/pymtcnn",
@@ -35,18 +35,33 @@ setup(
     install_requires=[
         "numpy>=1.20.0",
         "opencv-python>=4.5.0",
-        "coremltools>=7.0",
     ],
     extras_require={
+        "coreml": [
+            "coremltools>=7.0",
+        ],
+        "onnx": [
+            "onnxruntime>=1.16.0",
+        ],
+        "onnx-gpu": [
+            "onnxruntime-gpu>=1.16.0",
+        ],
+        "all": [
+            "coremltools>=7.0",
+            "onnxruntime-gpu>=1.16.0",
+        ],
         "dev": [
             "pytest>=7.0.0",
             "pillow>=9.0.0",
             "matplotlib>=3.5.0",
+            "build>=0.10.0",
+            "twine>=4.0.0",
         ],
     },
     package_data={
         "pymtcnn": [
             "models/*.mlpackage/**/*",
+            "models/*.onnx",
         ],
     },
     include_package_data=True,

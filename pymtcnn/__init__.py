@@ -1,18 +1,16 @@
 """
-PyMTCNN - High-Performance MTCNN Face Detection for Apple Silicon
+PyMTCNN - High-Performance Cross-Platform MTCNN Face Detection
 
-A pure Python + CoreML implementation of MTCNN (Multi-task Cascaded Convolutional Networks)
-optimized for Apple Neural Engine, achieving 34.26 FPS on M-series chips.
+Cross-platform MTCNN implementation with automatic backend selection:
+- CoreML (Apple Neural Engine) on macOS: 34.26 FPS
+- ONNX + CUDA on NVIDIA GPUs: 50+ FPS
+- ONNX + CPU fallback: 5-10 FPS
 
 Example usage:
-    from pymtcnn import CoreMLMTCNN
+    from pymtcnn import MTCNN
 
-    # Initialize detector
-    detector = CoreMLMTCNN(
-        min_face_size=60,
-        thresholds=[0.6, 0.7, 0.7],
-        factor=0.709
-    )
+    # Auto-select best backend
+    detector = MTCNN()
 
     # Single-frame detection
     bboxes, landmarks = detector.detect(frame)
@@ -20,19 +18,48 @@ Example usage:
     # Batch processing (cross-frame batching)
     results = detector.detect_batch(frames)
 
+    # Or use specific backends:
+    from pymtcnn import CoreMLMTCNN, ONNXMTCNN
+
+    coreml_detector = CoreMLMTCNN()  # Force CoreML
+    onnx_detector = ONNXMTCNN()      # Force ONNX
+
+Installation:
+    - macOS (CoreML): pip install pymtcnn[coreml]
+    - NVIDIA GPU: pip install pymtcnn[onnx-gpu]
+    - CPU only: pip install pymtcnn[onnx]
+
 Performance:
-    - Single-frame: 31.88 FPS (31.4 ms/frame)
-    - Batch (4 frames): 34.26 FPS (29.2 ms/frame)
+    - CoreML: 31.88 FPS (single-frame), 34.26 FPS (batch)
+    - ONNX+CUDA: 50+ FPS on RTX GPUs
+    - ONNX+CPU: 5-10 FPS
     - Accuracy: 95% IoU vs C++ OpenFace baseline
 
 License:
     CC BY-NC 4.0 (Creative Commons Attribution-NonCommercial 4.0)
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "SplitFace"
 __license__ = "CC BY-NC 4.0"
 
-from .detector import CoreMLMTCNN
+# Primary API: Unified MTCNN with auto-backend selection
+from .detector import MTCNN
 
-__all__ = ["CoreMLMTCNN"]
+# Backend-specific classes (optional, for advanced users)
+try:
+    from .backends.coreml_backend import CoreMLMTCNN
+except ImportError:
+    CoreMLMTCNN = None
+
+try:
+    from .backends.onnx_backend import ONNXMTCNN
+except ImportError:
+    ONNXMTCNN = None
+
+# Export all available classes
+__all__ = ["MTCNN"]
+if CoreMLMTCNN is not None:
+    __all__.append("CoreMLMTCNN")
+if ONNXMTCNN is not None:
+    __all__.append("ONNXMTCNN")
