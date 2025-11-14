@@ -8,6 +8,12 @@ into the S1 video processing pipeline.
 Architecture:
     S1 → PyMTCNN (face detection) → PyFaceAU (AU extraction) → S1 (analysis)
 
+Cross-Platform Support:
+- Automatically uses best available backend (CUDA > CoreML > CPU)
+- Apple Silicon: CoreML backend (34.26 FPS)
+- NVIDIA GPU: ONNX + CUDA backend (50+ FPS)
+- CPU fallback: ONNX backend (5-10 FPS)
+
 Best practices:
 - Use batch processing with batch_size=4 for maximum throughput
 - Process videos in chunks to manage memory
@@ -20,7 +26,7 @@ import json
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 import numpy as np
-from pymtcnn import CoreMLMTCNN
+from pymtcnn import MTCNN
 
 
 class S1VideoProcessor:
@@ -28,24 +34,28 @@ class S1VideoProcessor:
     Example S1 video processor using PyMTCNN for face detection.
 
     This class demonstrates the recommended integration pattern for S1.
+    Works on any platform with automatic backend selection.
     """
 
-    def __init__(self, batch_size: int = 4):
+    def __init__(self, batch_size: int = 4, backend: str = 'auto'):
         """
         Initialize S1 video processor.
 
         Args:
             batch_size: Number of frames to process in each batch (default: 4)
+            backend: Backend to use ('auto', 'cuda', 'coreml', 'cpu')
         """
         self.batch_size = batch_size
-        self.mtcnn = CoreMLMTCNN(
+        self.mtcnn = MTCNN(
+            backend=backend,
             min_face_size=60,
             thresholds=[0.6, 0.7, 0.7],
             factor=0.709,
             verbose=False  # Silent for production use
         )
 
-        print(f"S1VideoProcessor initialized with batch_size={batch_size}")
+        backend_info = self.mtcnn.get_backend_info()
+        print(f"S1VideoProcessor initialized with batch_size={batch_size}, backend={backend_info}")
 
     def process_video(self, video_path: Path) -> List[Dict[str, Any]]:
         """

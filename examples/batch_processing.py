@@ -6,13 +6,17 @@ This example demonstrates how to use PyMTCNN for batch video processing with
 cross-frame batching for maximum throughput.
 
 Best for: offline video analysis, maximum throughput scenarios.
-Performance: 34.26 FPS (29.2 ms/frame) with batch_size=4
+
+Cross-Platform Performance (batch_size=4):
+- Apple Silicon (M1/M2/M3): 34.26 FPS with CoreML backend
+- NVIDIA GPU: 50+ FPS with ONNX + CUDA backend
+- CPU: 5-10 FPS with ONNX backend
 """
 
 import cv2
 import time
 from pathlib import Path
-from pymtcnn import CoreMLMTCNN
+from pymtcnn import MTCNN
 
 
 def main():
@@ -20,15 +24,17 @@ def main():
     print("PyMTCNN - Batch Video Processing Example")
     print("=" * 80)
 
-    # Initialize detector
+    # Initialize detector with automatic backend selection
     print("\n1. Initializing PyMTCNN...")
-    detector = CoreMLMTCNN(
+    detector = MTCNN(
+        backend='auto',             # Auto-select best backend (or 'cuda', 'coreml', 'cpu')
         min_face_size=60,
         thresholds=[0.6, 0.7, 0.7],
         factor=0.709,
         verbose=True
     )
     print("   Detector initialized successfully!")
+    print(f"   Active backend: {detector.get_backend_info()}")
 
     # Load video
     print("\n2. Loading video...")

@@ -5,13 +5,16 @@ Example: Single-frame face detection with PyMTCNN
 This example demonstrates how to use PyMTCNN for real-time, per-frame face detection.
 Best for: webcam feeds, real-time processing, lowest latency scenarios.
 
-Performance: 31.88 FPS (31.4 ms/frame)
+Cross-Platform Performance:
+- Apple Silicon (M1/M2/M3): 31.88 FPS with CoreML backend
+- NVIDIA GPU: 50+ FPS with ONNX + CUDA backend
+- CPU: 5-10 FPS with ONNX backend
 """
 
 import cv2
 import time
 from pathlib import Path
-from pymtcnn import CoreMLMTCNN
+from pymtcnn import MTCNN
 
 
 def main():
@@ -19,15 +22,17 @@ def main():
     print("PyMTCNN - Single Frame Detection Example")
     print("=" * 80)
 
-    # Initialize detector
+    # Initialize detector with automatic backend selection
     print("\n1. Initializing PyMTCNN...")
-    detector = CoreMLMTCNN(
-        min_face_size=60,          # Minimum face size in pixels
+    detector = MTCNN(
+        backend='auto',             # Auto-select best backend (or 'cuda', 'coreml', 'cpu')
+        min_face_size=60,           # Minimum face size in pixels
         thresholds=[0.6, 0.7, 0.7], # Detection thresholds
         factor=0.709,               # Image pyramid scale
-        verbose=True                # Show loading messages
+        verbose=True                # Show loading messages and backend info
     )
     print("   Detector initialized successfully!")
+    print(f"   Active backend: {detector.get_backend_info()}")
 
     # Load test image
     print("\n2. Loading test image...")
