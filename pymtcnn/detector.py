@@ -32,7 +32,7 @@ class MTCNN:
     3. ONNX with CPU (fallback)
     """
 
-    def __init__(self, backend=None, model_dir=None, verbose=False, **kwargs):
+    def __init__(self, backend=None, model_dir=None, verbose=False, debug_mode=False, **kwargs):
         """
         Initialize MTCNN detector with automatic backend selection.
 
@@ -41,9 +41,11 @@ class MTCNN:
                     Default: 'auto' (automatically selects best available)
             model_dir: Directory containing models (default: bundled models)
             verbose: Print initialization and backend selection info
+            debug_mode: Enable debug mode for stage-by-stage output capture
             **kwargs: Additional backend-specific arguments
         """
         self.verbose = verbose
+        self.debug_mode = debug_mode
         self.backend_name = None
         self._detector = None
 
@@ -150,18 +152,34 @@ class MTCNN:
                 "  CPU: pip install pymtcnn[onnx]"
             ) from e
 
-    def detect(self, img):
+    def detect(self, img, return_debug=False):
         """
         Detect faces in a single image.
 
         Args:
             img: Input image (H, W, 3) in BGR format (OpenCV format)
+            return_debug: If True, return debug info with stage-by-stage outputs
 
         Returns:
-            bboxes: (N, 4) array of [x, y, w, h]
-            landmarks: (N, 5, 2) array of facial landmarks
+            If return_debug=False:
+                bboxes: (N, 4) array of [x, y, w, h]
+                landmarks: (N, 5, 2) array of facial landmarks
+            If return_debug=True:
+                bboxes: (N, 4) array of [x, y, w, h]
+                landmarks: (N, 5, 2) array of facial landmarks
+                debug_info: Dict with stage-by-stage outputs
         """
-        return self._detector.detect(img)
+        if return_debug or self.debug_mode:
+            # Check if backend supports debug mode
+            if hasattr(self._detector, 'detect_with_debug'):
+                return self._detector.detect_with_debug(img)
+            else:
+                # Fallback: return normal detection with empty debug info
+                bboxes, landmarks = self._detector.detect(img)
+                debug_info = {'warning': 'Backend does not support debug mode'}
+                return bboxes, landmarks, debug_info
+        else:
+            return self._detector.detect(img)
 
     def detect_batch(self, frames):
         """
