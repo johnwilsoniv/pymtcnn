@@ -422,7 +422,8 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        # Keep landmarks in normalized form for now
+        # NOTE: Landmarks are denormalized AFTER calibration (see below)
+
         landmarks = landmarks.reshape(-1, 5, 2)
 
         keep = self._nms(total_boxes, 0.7, 'Min')
@@ -442,7 +443,7 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
             total_boxes[k, 2] = new_x1 + new_width
             total_boxes[k, 3] = new_y1 + new_height
 
-        # Denormalize landmarks using calibrated bbox
+        # Denormalize landmarks using CALIBRATED bbox dimensions
         for k in range(total_boxes.shape[0]):
             w = total_boxes[k, 2] - total_boxes[k, 0]
             h = total_boxes[k, 3] - total_boxes[k, 1]

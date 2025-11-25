@@ -397,7 +397,9 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        # Keep landmarks in normalized form for now
+        # NOTE: Landmarks are denormalized AFTER calibration (see below)
+        # to ensure they align with the calibrated bbox
+
         landmarks = landmarks.reshape(-1, 5, 2)
 
         # Final NMS
@@ -419,7 +421,8 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             total_boxes[k, 2] = new_x1 + new_width
             total_boxes[k, 3] = new_y1 + new_height
 
-        # Denormalize landmarks using calibrated bbox
+        # Denormalize landmarks using CALIBRATED bbox dimensions
+        # This ensures landmarks and bbox are properly aligned
         for k in range(total_boxes.shape[0]):
             w = total_boxes[k, 2] - total_boxes[k, 0]
             h = total_boxes[k, 3] - total_boxes[k, 1]
@@ -675,9 +678,7 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        for i in range(5):
-            landmarks[:, 2*i] = total_boxes[:, 0] + landmarks[:, 2*i] * w
-            landmarks[:, 2*i+1] = total_boxes[:, 1] + landmarks[:, 2*i+1] * h
+        # NOTE: Landmarks are denormalized AFTER calibration (see below)
 
         landmarks = landmarks.reshape(-1, 5, 2)
 
@@ -696,6 +697,14 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             total_boxes[k, 1] = new_y1
             total_boxes[k, 2] = new_x1 + new_width
             total_boxes[k, 3] = new_y1 + new_height
+
+        # Denormalize landmarks using CALIBRATED bbox dimensions
+        for k in range(total_boxes.shape[0]):
+            w = total_boxes[k, 2] - total_boxes[k, 0]
+            h = total_boxes[k, 3] - total_boxes[k, 1]
+            for i in range(5):
+                landmarks[k, i, 0] = total_boxes[k, 0] + landmarks[k, i, 0] * w
+                landmarks[k, i, 1] = total_boxes[k, 1] + landmarks[k, i, 1] * h
 
         onet_time = (time.time() - t0) * 1000
 
@@ -971,10 +980,7 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             total_boxes[:, 3] = y1 + h + h * reg[:, 3]
             total_boxes[:, 4] = frame_scores
 
-            # Denormalize landmarks
-            for i in range(5):
-                landmarks[:, 2*i] = total_boxes[:, 0] + landmarks[:, 2*i] * w
-                landmarks[:, 2*i+1] = total_boxes[:, 1] + landmarks[:, 2*i+1] * h
+            # NOTE: Landmarks are denormalized AFTER calibration (see below)
 
             landmarks = landmarks.reshape(-1, 5, 2)
 
@@ -995,6 +1001,14 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
                 total_boxes[k, 1] = new_y1
                 total_boxes[k, 2] = new_x1 + new_width
                 total_boxes[k, 3] = new_y1 + new_height
+
+            # Denormalize landmarks using CALIBRATED bbox dimensions
+            for k in range(total_boxes.shape[0]):
+                w = total_boxes[k, 2] - total_boxes[k, 0]
+                h = total_boxes[k, 3] - total_boxes[k, 1]
+                for i in range(5):
+                    landmarks[k, i, 0] = total_boxes[k, 0] + landmarks[k, i, 0] * w
+                    landmarks[k, i, 1] = total_boxes[k, 1] + landmarks[k, i, 1] * h
 
             # Convert to (x, y, width, height) format
             bboxes = np.zeros((total_boxes.shape[0], 4))
