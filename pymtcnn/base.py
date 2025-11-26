@@ -288,28 +288,27 @@ class PurePythonMTCNN_Optimized:
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Apply final calibration (CRITICAL for accuracy!)
+        # Apply final calibration (CRITICAL for accuracy!) - VECTORIZED
         # This adjusts the bbox to be tight around facial landmarks
-        for k in range(total_boxes.shape[0]):
-            w = total_boxes[k, 2] - total_boxes[k, 0]
-            h = total_boxes[k, 3] - total_boxes[k, 1]
-            new_x1 = total_boxes[k, 0] + w * -0.0075
-            new_y1 = total_boxes[k, 1] + h * 0.2459
-            new_width = w * 1.0323
-            new_height = h * 0.7751
-            total_boxes[k, 0] = new_x1
-            total_boxes[k, 1] = new_y1
-            total_boxes[k, 2] = new_x1 + new_width
-            total_boxes[k, 3] = new_y1 + new_height
+        w = total_boxes[:, 2] - total_boxes[:, 0]
+        h = total_boxes[:, 3] - total_boxes[:, 1]
+        new_x1 = total_boxes[:, 0] + w * -0.0075
+        new_y1 = total_boxes[:, 1] + h * 0.2459
+        new_width = w * 1.0323
+        new_height = h * 0.7751
+        total_boxes[:, 0] = new_x1
+        total_boxes[:, 1] = new_y1
+        total_boxes[:, 2] = new_x1 + new_width
+        total_boxes[:, 3] = new_y1 + new_height
 
-        # Denormalize landmarks using CALIBRATED bbox dimensions
+        # Denormalize landmarks using CALIBRATED bbox dimensions - VECTORIZED
         # This ensures landmarks and bbox are properly aligned
-        for k in range(total_boxes.shape[0]):
-            w = total_boxes[k, 2] - total_boxes[k, 0]
-            h = total_boxes[k, 3] - total_boxes[k, 1]
-            for i in range(5):
-                landmarks[k, i, 0] = total_boxes[k, 0] + landmarks[k, i, 0] * w
-                landmarks[k, i, 1] = total_boxes[k, 1] + landmarks[k, i, 1] * h
+        w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
+        h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
+        x1 = total_boxes[:, 0].reshape(-1, 1)
+        y1 = total_boxes[:, 1].reshape(-1, 1)
+        landmarks[:, :, 0] = x1 + landmarks[:, :, 0] * w
+        landmarks[:, :, 1] = y1 + landmarks[:, :, 1] * h
 
         # Convert to (x, y, width, height) format
         bboxes = np.zeros((total_boxes.shape[0], 4))
