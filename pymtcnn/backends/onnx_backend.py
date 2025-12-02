@@ -25,7 +25,7 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
     only replaces the CNN forward passes with ONNX inference.
     """
 
-    def __init__(self, model_dir=None, provider=None, verbose=False):
+    def __init__(self, model_dir=None, provider=None, verbose=False, intra_op_threads=None):
         """
         Initialize ONNX MTCNN detector.
 
@@ -33,6 +33,8 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
             model_dir: Directory containing ONNX models (default: models/)
             provider: Execution provider ('cuda', 'coreml', 'cpu', or None for auto)
             verbose: Print loading messages (default: False)
+            intra_op_threads: Number of threads for intra-op parallelism (default: None = auto)
+                              Set to 1 for HPC multiprocessing to avoid thread affinity conflicts.
         """
         # Don't call super().__init__() - we'll load ONNX models instead
 
@@ -47,17 +49,33 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         # Determine execution providers
         providers = self._get_providers(provider, verbose)
 
-        # Load ONNX models
+        # Configure session options for HPC compatibility
+        # This prevents ONNX Runtime from trying to set thread affinity
+        sess_options = ort.SessionOptions()
+        if intra_op_threads is not None:
+            sess_options.intra_op_num_threads = intra_op_threads
+            sess_options.inter_op_num_threads = 1
+        # Check environment variable for HPC mode
+        import os
+        if os.environ.get('ORT_NUM_THREADS'):
+            threads = int(os.environ.get('ORT_NUM_THREADS', '1'))
+            sess_options.intra_op_num_threads = threads
+            sess_options.inter_op_num_threads = 1
+
+        # Load ONNX models with session options
         self.pnet = ort.InferenceSession(
             str(model_dir / "pnet.onnx"),
+            sess_options=sess_options,
             providers=providers
         )
         self.rnet = ort.InferenceSession(
             str(model_dir / "rnet.onnx"),
+            sess_options=sess_options,
             providers=providers
         )
         self.onet = ort.InferenceSession(
             str(model_dir / "onet.onnx"),
+            sess_options=sess_options,
             providers=providers
         )
 
