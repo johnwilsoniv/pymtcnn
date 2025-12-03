@@ -278,10 +278,9 @@ class PurePythonMTCNN_Optimized:
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        # NOTE: Landmarks are denormalized AFTER calibration (see below)
-        # to ensure they align with the calibrated bbox
-
-        landmarks = landmarks.reshape(-1, 5, 2)
+        # ONet outputs landmarks as [x0,x1,x2,x3,x4, y0,y1,y2,y3,y4] (x-first format)
+        # Reshape correctly to (N, 5, 2) where [:, i, 0] = x_i, [:, i, 1] = y_i
+        landmarks = np.stack([landmarks[:, 0:5], landmarks[:, 5:10]], axis=2)
 
         # Final NMS
         keep = self._nms(total_boxes, 0.7, 'Min')
