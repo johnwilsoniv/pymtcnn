@@ -351,16 +351,39 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            x1 = int(max(0, total_boxes[i, 0]))
-            y1 = int(max(0, total_boxes[i, 1]))
-            x2 = int(min(img_w, total_boxes[i, 2]))
-            y2 = int(min(img_h, total_boxes[i, 3]))
+            # C++ matching extraction: use (x-1, y-1) start and (w+1, h+1) buffer
+            box_x = total_boxes[i, 0]
+            box_y = total_boxes[i, 1]
+            box_w = total_boxes[i, 2] - total_boxes[i, 0]
+            box_h = total_boxes[i, 3] - total_boxes[i, 1]
 
-            if x2 <= x1 or y2 <= y1:
+            width_target = int(box_w + 1)
+            height_target = int(box_h + 1)
+
+            # C++ uses x-1, y-1 as extraction start
+            start_x_in = max(int(box_x - 1), 0)
+            start_y_in = max(int(box_y - 1), 0)
+            end_x_in = min(int(box_x + width_target - 1), img_w)
+            end_y_in = min(int(box_y + height_target - 1), img_h)
+
+            # Output buffer offsets (for edge cases)
+            start_x_out = max(int(-box_x + 1), 0)
+            start_y_out = max(int(-box_y + 1), 0)
+
+            if end_x_in <= start_x_in or end_y_in <= start_y_in:
                 continue
 
-            face = img_float[y1:y2, x1:x2]
-            face = cv2.resize(face, (48, 48))
+            # Create zero-padded buffer of size (w+1, h+1)
+            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+            # Copy image region to buffer
+            copy_h = end_y_in - start_y_in
+            copy_w = end_x_in - start_x_in
+            tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+            # Resize to 48x48 and preprocess
+            face = cv2.resize(tmp, (48, 48))
             onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
             valid_indices.append(i)
 
@@ -629,16 +652,39 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            x1 = int(max(0, total_boxes[i, 0]))
-            y1 = int(max(0, total_boxes[i, 1]))
-            x2 = int(min(img_w, total_boxes[i, 2]))
-            y2 = int(min(img_h, total_boxes[i, 3]))
+            # C++ matching extraction: use (x-1, y-1) start and (w+1, h+1) buffer
+            box_x = total_boxes[i, 0]
+            box_y = total_boxes[i, 1]
+            box_w = total_boxes[i, 2] - total_boxes[i, 0]
+            box_h = total_boxes[i, 3] - total_boxes[i, 1]
 
-            if x2 <= x1 or y2 <= y1:
+            width_target = int(box_w + 1)
+            height_target = int(box_h + 1)
+
+            # C++ uses x-1, y-1 as extraction start
+            start_x_in = max(int(box_x - 1), 0)
+            start_y_in = max(int(box_y - 1), 0)
+            end_x_in = min(int(box_x + width_target - 1), img_w)
+            end_y_in = min(int(box_y + height_target - 1), img_h)
+
+            # Output buffer offsets (for edge cases)
+            start_x_out = max(int(-box_x + 1), 0)
+            start_y_out = max(int(-box_y + 1), 0)
+
+            if end_x_in <= start_x_in or end_y_in <= start_y_in:
                 continue
 
-            face = img_float[y1:y2, x1:x2]
-            face = cv2.resize(face, (48, 48))
+            # Create zero-padded buffer of size (w+1, h+1)
+            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+            # Copy image region to buffer
+            copy_h = end_y_in - start_y_in
+            copy_w = end_x_in - start_x_in
+            tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+            # Resize to 48x48 and preprocess
+            face = cv2.resize(tmp, (48, 48))
             onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
             valid_indices.append(i)
 
@@ -683,6 +729,10 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
+        # CAPTURE: Raw normalized landmarks and bbox BEFORE calibration (for C++ comparison)
+        landmarks_raw_normalized = landmarks.copy()  # [0-1] range, ONet output
+        bbox_before_calibration = total_boxes[:, :4].copy()  # [x1, y1, x2, y2] BEFORE calibration
+
         # Apply calibration - VECTORIZED
         w = total_boxes[:, 2] - total_boxes[:, 0]
         h = total_boxes[:, 3] - total_boxes[:, 1]
@@ -712,10 +762,19 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         bboxes[:, 2] = total_boxes[:, 2] - total_boxes[:, 0]
         bboxes[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
 
+        # Convert uncalibrated bbox to [x, y, w, h] format for debug
+        bbox_uncal = np.zeros((bbox_before_calibration.shape[0], 4))
+        bbox_uncal[:, 0] = bbox_before_calibration[:, 0]
+        bbox_uncal[:, 1] = bbox_before_calibration[:, 1]
+        bbox_uncal[:, 2] = bbox_before_calibration[:, 2] - bbox_before_calibration[:, 0]
+        bbox_uncal[:, 3] = bbox_before_calibration[:, 3] - bbox_before_calibration[:, 1]
+
         debug_info['onet'] = {
             'num_boxes': bboxes.shape[0],
             'boxes': bboxes.copy(),
             'landmarks': landmarks.copy(),
+            'landmarks_raw_normalized': landmarks_raw_normalized.copy(),  # Raw ONet output [0-1]
+            'bbox_before_calibration': bbox_uncal.copy(),  # For C++ comparison
             'time_ms': onet_time
         }
 
@@ -914,16 +973,39 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             total_boxes = self._square_bbox(rnet_boxes)
 
             for box_idx in range(total_boxes.shape[0]):
-                x1 = int(max(0, total_boxes[box_idx, 0]))
-                y1 = int(max(0, total_boxes[box_idx, 1]))
-                x2 = int(min(img_w, total_boxes[box_idx, 2]))
-                y2 = int(min(img_h, total_boxes[box_idx, 3]))
+                # C++ matching extraction: use (x-1, y-1) start and (w+1, h+1) buffer
+                box_x = total_boxes[box_idx, 0]
+                box_y = total_boxes[box_idx, 1]
+                box_w = total_boxes[box_idx, 2] - total_boxes[box_idx, 0]
+                box_h = total_boxes[box_idx, 3] - total_boxes[box_idx, 1]
 
-                if x2 <= x1 or y2 <= y1:
+                width_target = int(box_w + 1)
+                height_target = int(box_h + 1)
+
+                # C++ uses x-1, y-1 as extraction start
+                start_x_in = max(int(box_x - 1), 0)
+                start_y_in = max(int(box_y - 1), 0)
+                end_x_in = min(int(box_x + width_target - 1), img_w)
+                end_y_in = min(int(box_y + height_target - 1), img_h)
+
+                # Output buffer offsets (for edge cases)
+                start_x_out = max(int(-box_x + 1), 0)
+                start_y_out = max(int(-box_y + 1), 0)
+
+                if end_x_in <= start_x_in or end_y_in <= start_y_in:
                     continue
 
-                face = img_float[y1:y2, x1:x2]
-                face = cv2.resize(face, (48, 48))
+                # Create zero-padded buffer of size (w+1, h+1)
+                tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+                # Copy image region to buffer
+                copy_h = end_y_in - start_y_in
+                copy_w = end_x_in - start_x_in
+                tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+                    img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+                # Resize to 48x48 and preprocess
+                face = cv2.resize(tmp, (48, 48))
                 all_onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
                 onet_frame_indices.append(frame_idx)
                 onet_box_indices.append(box_idx)

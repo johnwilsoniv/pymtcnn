@@ -228,16 +228,39 @@ class PurePythonMTCNN_Optimized:
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            x1 = int(max(0, total_boxes[i, 0]))
-            y1 = int(max(0, total_boxes[i, 1]))
-            x2 = int(min(img_w, total_boxes[i, 2]))
-            y2 = int(min(img_h, total_boxes[i, 3]))
+            # C++ matching extraction: use (x-1, y-1) start and (w+1, h+1) buffer
+            box_x = total_boxes[i, 0]
+            box_y = total_boxes[i, 1]
+            box_w = total_boxes[i, 2] - total_boxes[i, 0]
+            box_h = total_boxes[i, 3] - total_boxes[i, 1]
 
-            if x2 <= x1 or y2 <= y1:
+            width_target = int(box_w + 1)
+            height_target = int(box_h + 1)
+
+            # C++ uses x-1, y-1 as extraction start
+            start_x_in = max(int(box_x - 1), 0)
+            start_y_in = max(int(box_y - 1), 0)
+            end_x_in = min(int(box_x + width_target - 1), img_w)
+            end_y_in = min(int(box_y + height_target - 1), img_h)
+
+            # Output buffer offsets (for edge cases)
+            start_x_out = max(int(-box_x + 1), 0)
+            start_y_out = max(int(-box_y + 1), 0)
+
+            if end_x_in <= start_x_in or end_y_in <= start_y_in:
                 continue
 
-            face = img_float[y1:y2, x1:x2]
-            face = cv2.resize(face, (48, 48))
+            # Create zero-padded buffer of size (w+1, h+1)
+            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+            # Copy image region to buffer
+            copy_h = end_y_in - start_y_in
+            copy_w = end_x_in - start_x_in
+            tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+            # Resize to 48x48 and preprocess
+            face = cv2.resize(tmp, (48, 48))
             onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
             valid_indices.append(i)
 
