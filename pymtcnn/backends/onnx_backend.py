@@ -429,20 +429,11 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Apply final calibration (adjusts bbox to be tight around facial landmarks)
-        for k in range(total_boxes.shape[0]):
-            w = total_boxes[k, 2] - total_boxes[k, 0]
-            h = total_boxes[k, 3] - total_boxes[k, 1]
-            new_x1 = total_boxes[k, 0] + w * -0.0075
-            new_y1 = total_boxes[k, 1] + h * 0.2459
-            new_width = w * 1.0323
-            new_height = h * 0.7751
-            total_boxes[k, 0] = new_x1
-            total_boxes[k, 1] = new_y1
-            total_boxes[k, 2] = new_x1 + new_width
-            total_boxes[k, 3] = new_y1 + new_height
+        # NO CALIBRATION - output raw bbox matching C++ raw output
+        # Calibration is applied downstream in the pipeline
 
-        # Denormalize landmarks using CALIBRATED bbox dimensions
+        # Denormalize landmarks using RAW (uncalibrated) bbox dimensions
+        # Landmarks are normalized [0,1] relative to the regressed bbox
         for k in range(total_boxes.shape[0]):
             w = total_boxes[k, 2] - total_boxes[k, 0]
             h = total_boxes[k, 3] - total_boxes[k, 1]

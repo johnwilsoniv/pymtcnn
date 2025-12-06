@@ -101,8 +101,8 @@ class ConvLayer(CPPCNNLayer):
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         """OPTIMIZED forward pass - removed debug I/O"""
-        if x.ndim == 3 and x.shape[2] == self.num_in_maps:
-            x = np.transpose(x, (2, 0, 1))
+        # Input is always expected in (C, H, W) format from MTCNN pipeline
+        # Removed ambiguous auto-detection that failed when C == W
 
         input_maps = [x[c, :, :] for c in range(self.num_in_maps)]
 

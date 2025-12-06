@@ -200,7 +200,8 @@ class PurePythonMTCNN_Optimized:
         scores = scores[keep]
         reg = output[keep, 2:6]
 
-        # NMS
+        # NMS - update column 4 with RNet scores before NMS
+        total_boxes[:, 4] = scores
         keep = self._nms(total_boxes, 0.7, 'Union')
         total_boxes = total_boxes[keep]
         scores = scores[keep]
@@ -310,21 +311,7 @@ class PurePythonMTCNN_Optimized:
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Apply final calibration (CRITICAL for accuracy!) - VECTORIZED
-        # This adjusts the bbox to be tight around facial landmarks
-        w = total_boxes[:, 2] - total_boxes[:, 0]
-        h = total_boxes[:, 3] - total_boxes[:, 1]
-        new_x1 = total_boxes[:, 0] + w * -0.0075
-        new_y1 = total_boxes[:, 1] + h * 0.2459
-        new_width = w * 1.0323
-        new_height = h * 0.7751
-        total_boxes[:, 0] = new_x1
-        total_boxes[:, 1] = new_y1
-        total_boxes[:, 2] = new_x1 + new_width
-        total_boxes[:, 3] = new_y1 + new_height
-
-        # Denormalize landmarks using CALIBRATED bbox dimensions - VECTORIZED
-        # This ensures landmarks and bbox are properly aligned
+        # Denormalize landmarks using raw bbox dimensions (matching C++ output)
         w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
         h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
         x1 = total_boxes[:, 0].reshape(-1, 1)
