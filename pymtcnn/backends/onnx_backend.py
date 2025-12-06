@@ -13,6 +13,8 @@ Performance:
 import numpy as np
 import onnxruntime as ort
 from pathlib import Path
+import time
+import cv2
 
 from ..base import PurePythonMTCNN_Optimized
 
@@ -107,85 +109,86 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         """Get the active execution provider."""
         return self.pnet.get_providers()[0]
 
+    # ==================== ONNX Inference Methods ====================
+
     def _run_pnet(self, img_data):
-        """
-        Run PNet using ONNX model.
-
-        Args:
-            img_data: Input shape (C, H, W)
-
-        Returns:
-            Output shape (1, 6, H', W') - batch dimension added for compatibility
-        """
-        # Add batch dimension: (C, H, W) → (1, C, H, W)
+        """Run PNet using ONNX model. Input: (C, H, W), Output: (1, 6, H', W')"""
         img_batch = np.expand_dims(img_data, axis=0).astype(np.float32)
-
-        # Run ONNX inference
-        output = self.pnet.run(None, {'input': img_batch})[0]
-
-        # Output shape: (1, 6, H', W')
-        # Pure Python MTCNN expects (1, 6, H', W')
-        return output
+        return self.pnet.run(None, {'input': img_batch})[0]
 
     def _run_rnet(self, img_data):
-        """
-        Run RNet using ONNX model.
-
-        Args:
-            img_data: Input shape (C, H, W) - should be (3, 24, 24)
-
-        Returns:
-            Output shape (6,) - [cls_not_face, cls_face, dx, dy, dw, dh]
-        """
-        # Add batch dimension: (C, H, W) → (1, C, H, W)
+        """Run RNet using ONNX model. Input: (C, H, W), Output: (6,)"""
         img_batch = np.expand_dims(img_data, axis=0).astype(np.float32)
-
-        # Run ONNX inference
-        output = self.rnet.run(None, {'input': img_batch})[0]
-
-        # Output shape: (1, 6) → (6,)
-        return output[0]
+        return self.rnet.run(None, {'input': img_batch})[0][0]
 
     def _run_onet(self, img_data):
-        """
-        Run ONet using ONNX model.
-
-        Args:
-            img_data: Input shape (C, H, W) - should be (3, 48, 48)
-
-        Returns:
-            Output shape (16,) - [cls_not_face, cls_face, dx, dy, dw, dh, lm1_x, lm1_y, ...]
-        """
-        # Add batch dimension: (C, H, W) → (1, C, H, W)
+        """Run ONet using ONNX model. Input: (C, H, W), Output: (16,)"""
         img_batch = np.expand_dims(img_data, axis=0).astype(np.float32)
+        return self.onet.run(None, {'input': img_batch})[0][0]
 
-        # Run ONNX inference
-        output = self.onet.run(None, {'input': img_batch})[0]
+    # ==================== Shared Pipeline Stages ====================
 
-        # Output shape: (1, 16) → (16,)
-        return output[0]
-
-    def detect_with_debug(self, img):
+    def _extract_crop(self, img_float, box, target_size):
         """
-        Detect faces in image with debug info capturing stage-by-stage outputs.
+        Extract and resize crop from image matching C++ MTCNN extraction.
 
-        This method is identical to CoreML's detect_with_debug() to ensure
-        identical pipeline behavior.
+        C++ uses (x-1, y-1) start and (w+1, h+1) buffer for proper edge handling.
 
         Args:
-            img: BGR image (H, W, 3)
+            img_float: Float32 image (H, W, 3)
+            box: Bounding box [x1, y1, x2, y2, score, ...]
+            target_size: Output size (e.g., 24 for RNet, 48 for ONet)
 
         Returns:
-            bboxes: (N, 4) array of [x, y, w, h]
-            landmarks: (N, 5, 2) array of facial landmarks
-            debug_info: Dict with stage-by-stage outputs
+            Preprocessed crop (C, H, W) or None if invalid
         """
-        import cv2
-        import time
-        debug_info = {}
+        img_h, img_w = img_float.shape[:2]
 
-        img_h, img_w = img.shape[:2]
-        img_float = img.astype(np.float32)
+        box_x = box[0]
+        box_y = box[1]
+        box_w = box[2] - box[0]
+        box_h = box[3] - box[1]
+
+        width_target = int(box_w + 1)
+        height_target = int(box_h + 1)
+
+        # C++ uses x-1, y-1 as extraction start
+        start_x_in = max(int(box_x - 1), 0)
+        start_y_in = max(int(box_y - 1), 0)
+        end_x_in = min(int(box_x + width_target - 1), img_w)
+        end_y_in = min(int(box_y + height_target - 1), img_h)
+
+        # Output buffer offsets (for edge cases)
+        start_x_out = max(int(-box_x + 1), 0)
+        start_y_out = max(int(-box_y + 1), 0)
+
+        if end_x_in <= start_x_in or end_y_in <= start_y_in:
+            return None
+
+        # Create zero-padded buffer of size (w+1, h+1)
+        tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+        # Copy image region to buffer
+        copy_h = end_y_in - start_y_in
+        copy_w = end_x_in - start_x_in
+        tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+            img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+        # Resize and preprocess
+        face = cv2.resize(tmp, (target_size, target_size))
+        return self._preprocess(face, flip_bgr_to_rgb=True)
+
+    def _pnet_stage(self, img_float):
+        """
+        Run PNet stage: pyramid processing, box generation, NMS.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+
+        Returns:
+            total_boxes: (N, 9) array after PNet or None if no detections
+        """
+        img_h, img_w = img_float.shape[:2]
 
         # Build image pyramid
         min_size = self.min_face_size
@@ -199,8 +202,6 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
             scale *= self.factor
             min_l *= self.factor
 
-        # Stage 1: PNet
-        t0 = time.time()
         total_boxes = []
 
         for scale in scales:
@@ -227,113 +228,74 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
                 boxes = boxes[keep]
                 total_boxes.append(boxes)
 
-        if len(total_boxes) > 0:
-            total_boxes = np.vstack(total_boxes)
-            keep = self._nms(total_boxes, 0.7, 'Union')
-            total_boxes = total_boxes[keep]
-            total_boxes = self._apply_bbox_regression(total_boxes)
-        else:
-            total_boxes = np.empty((0, 9))
+        if len(total_boxes) == 0:
+            return None
 
-        pnet_time = (time.time() - t0) * 1000
+        total_boxes = np.vstack(total_boxes)
 
-        # Convert to [x, y, w, h] format for debug
-        pnet_boxes_debug = np.zeros((total_boxes.shape[0], 4))
-        if total_boxes.shape[0] > 0:
-            pnet_boxes_debug[:, 0] = total_boxes[:, 0]
-            pnet_boxes_debug[:, 1] = total_boxes[:, 1]
-            pnet_boxes_debug[:, 2] = total_boxes[:, 2] - total_boxes[:, 0]
-            pnet_boxes_debug[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
-
-        debug_info['pnet'] = {
-            'num_boxes': total_boxes.shape[0],
-            'boxes': pnet_boxes_debug.copy(),
-            'time_ms': pnet_time
-        }
+        # NMS across scales
+        keep = self._nms(total_boxes, 0.7, 'Union')
+        total_boxes = total_boxes[keep]
 
         if total_boxes.shape[0] == 0:
-            debug_info['rnet'] = {'num_boxes': 0, 'boxes': np.array([]), 'time_ms': 0.0}
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': 0.0}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+            return None
 
-        # Stage 2: RNet
-        t0 = time.time()
+        # Apply PNet bbox regression
+        total_boxes = self._apply_bbox_regression(total_boxes)
+        return total_boxes
+
+    def _rnet_stage(self, img_float, total_boxes):
+        """
+        Run RNet stage: crop extraction, scoring, filtering, NMS, regression.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+            total_boxes: (N, 9) boxes from PNet
+
+        Returns:
+            total_boxes: (N, 9) array after RNet or None if no detections
+        """
         total_boxes = self._square_bbox(total_boxes)
 
         rnet_input = []
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            bbox_x = total_boxes[i, 0]
-            bbox_y = total_boxes[i, 1]
-            bbox_w = total_boxes[i, 2] - total_boxes[i, 0]
-            bbox_h = total_boxes[i, 3] - total_boxes[i, 1]
-
-            width_target = int(bbox_w + 1)
-            height_target = int(bbox_h + 1)
-
-            start_x_in = max(int(bbox_x - 1), 0)
-            start_y_in = max(int(bbox_y - 1), 0)
-            end_x_in = min(int(bbox_x + width_target - 1), img_w)
-            end_y_in = min(int(bbox_y + height_target - 1), img_h)
-
-            start_x_out = max(int(-bbox_x + 1), 0)
-            start_y_out = max(int(-bbox_y + 1), 0)
-            end_x_out = min(int(width_target - (bbox_x + bbox_w - img_w)), width_target)
-            end_y_out = min(int(height_target - (bbox_y + bbox_h - img_h)), height_target)
-
-            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
-            tmp[start_y_out:end_y_out, start_x_out:end_x_out] = \
-                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
-
-            face = cv2.resize(tmp, (24, 24))
-            rnet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
-            valid_indices.append(i)
+            crop = self._extract_crop(img_float, total_boxes[i], 24)
+            if crop is not None:
+                rnet_input.append(crop)
+                valid_indices.append(i)
 
         if len(rnet_input) == 0:
-            rnet_time = (time.time() - t0) * 1000
-            debug_info['rnet'] = {'num_boxes': 0, 'boxes': np.array([]), 'time_ms': rnet_time}
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': 0.0}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time + rnet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+            return None
 
         total_boxes = total_boxes[valid_indices]
 
-        # Run RNet
-        rnet_outputs = []
-        for face_data in rnet_input:
-            output = self._run_rnet(face_data)
-            rnet_outputs.append(output)
-
+        # Run RNet (sequential for ONNX)
+        rnet_outputs = [self._run_rnet(face_data) for face_data in rnet_input]
         output = np.vstack(rnet_outputs)
         scores = 1.0 / (1.0 + np.exp(output[:, 0] - output[:, 1]))
 
+        # Filter by threshold
         keep = scores > self.thresholds[1]
-
         if not keep.any():
-            rnet_time = (time.time() - t0) * 1000
-            debug_info['rnet'] = {'num_boxes': 0, 'boxes': np.array([]), 'time_ms': rnet_time}
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': 0.0}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time + rnet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+            return None
 
         total_boxes = total_boxes[keep]
         scores = scores[keep]
         reg = output[keep, 2:6]
 
+        # NMS - update scores BEFORE NMS (critical for correct box selection)
+        total_boxes[:, 4] = scores
         keep = self._nms(total_boxes, 0.7, 'Union')
         total_boxes = total_boxes[keep]
         scores = scores[keep]
         reg = reg[keep]
 
         if total_boxes.shape[0] == 0:
-            rnet_time = (time.time() - t0) * 1000
-            debug_info['rnet'] = {'num_boxes': 0, 'boxes': np.array([]), 'time_ms': rnet_time}
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': 0.0}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time + rnet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+            return None
 
+        # Apply RNet regression
         w = total_boxes[:, 2] - total_boxes[:, 0]
         h = total_boxes[:, 3] - total_boxes[:, 1]
         x1 = total_boxes[:, 0].copy()
@@ -345,9 +307,166 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
+        return total_boxes
+
+    def _onet_stage(self, img_float, total_boxes):
+        """
+        Run ONet stage: crop extraction, scoring, filtering, regression, landmarks.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+            total_boxes: (N, 9) boxes from RNet
+
+        Returns:
+            bboxes: (N, 4) array [x, y, w, h]
+            landmarks: (N, 5, 2) array of facial landmarks
+            Or (None, None) if no detections
+        """
+        total_boxes = self._square_bbox(total_boxes)
+
+        onet_input = []
+        valid_indices = []
+
+        for i in range(total_boxes.shape[0]):
+            crop = self._extract_crop(img_float, total_boxes[i], 48)
+            if crop is not None:
+                onet_input.append(crop)
+                valid_indices.append(i)
+
+        if len(onet_input) == 0:
+            return None, None
+
+        total_boxes = total_boxes[valid_indices]
+
+        # Run ONet (sequential for ONNX)
+        onet_outputs = [self._run_onet(face_data) for face_data in onet_input]
+        output = np.vstack(onet_outputs)
+        scores = 1.0 / (1.0 + np.exp(output[:, 0] - output[:, 1]))
+
+        # Filter by threshold
+        keep = scores > self.thresholds[2]
+        total_boxes = total_boxes[keep]
+        scores = scores[keep]
+        reg = output[keep, 2:6]
+        landmarks = output[keep, 6:16]
+
+        if total_boxes.shape[0] == 0:
+            return None, None
+
+        # Apply ONet regression (with +1)
+        w = total_boxes[:, 2] - total_boxes[:, 0] + 1
+        h = total_boxes[:, 3] - total_boxes[:, 1] + 1
+        x1 = total_boxes[:, 0].copy()
+        y1 = total_boxes[:, 1].copy()
+
+        total_boxes[:, 0] = x1 + reg[:, 0] * w
+        total_boxes[:, 1] = y1 + reg[:, 1] * h
+        total_boxes[:, 2] = x1 + w + w * reg[:, 2]
+        total_boxes[:, 3] = y1 + h + h * reg[:, 3]
+        total_boxes[:, 4] = scores
+
+        # Reshape landmarks: [x0,x1,x2,x3,x4, y0,y1,y2,y3,y4] -> (N, 5, 2)
+        landmarks = np.stack([landmarks[:, 0:5], landmarks[:, 5:10]], axis=2)
+
+        # Final NMS
+        keep = self._nms(total_boxes, 0.7, 'Min')
+        total_boxes = total_boxes[keep]
+        landmarks = landmarks[keep]
+
+        # Denormalize landmarks using raw bbox dimensions
+        w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
+        h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
+        x1 = total_boxes[:, 0].reshape(-1, 1)
+        y1 = total_boxes[:, 1].reshape(-1, 1)
+        landmarks[:, :, 0] = x1 + landmarks[:, :, 0] * w
+        landmarks[:, :, 1] = y1 + landmarks[:, :, 1] * h
+
+        # Convert to (x, y, width, height) format
+        bboxes = np.zeros((total_boxes.shape[0], 4))
+        bboxes[:, 0] = total_boxes[:, 0]
+        bboxes[:, 1] = total_boxes[:, 1]
+        bboxes[:, 2] = total_boxes[:, 2] - total_boxes[:, 0]
+        bboxes[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
+
+        return bboxes, landmarks
+
+    # ==================== Public Detection Methods ====================
+
+    def detect(self, img):
+        """
+        Detect faces in image using MTCNN cascade.
+
+        Args:
+            img: BGR image (H, W, 3)
+
+        Returns:
+            bboxes: (N, 4) array of [x, y, w, h]
+            landmarks: (N, 5, 2) array of facial landmarks
+        """
+        img_float = img.astype(np.float32)
+
+        # Stage 1: PNet
+        total_boxes = self._pnet_stage(img_float)
+        if total_boxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        # Stage 2: RNet
+        total_boxes = self._rnet_stage(img_float, total_boxes)
+        if total_boxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        # Stage 3: ONet
+        bboxes, landmarks = self._onet_stage(img_float, total_boxes)
+        if bboxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        return bboxes, landmarks
+
+    def detect_with_debug(self, img):
+        """
+        Detect faces with debug info capturing stage-by-stage outputs.
+
+        Args:
+            img: BGR image (H, W, 3)
+
+        Returns:
+            bboxes: (N, 4) array of [x, y, w, h]
+            landmarks: (N, 5, 2) array of facial landmarks
+            debug_info: Dict with stage-by-stage outputs
+        """
+        debug_info = {}
+        img_float = img.astype(np.float32)
+
+        # Stage 1: PNet
+        t0 = time.time()
+        total_boxes = self._pnet_stage(img_float)
+        pnet_time = (time.time() - t0) * 1000
+
+        if total_boxes is None:
+            debug_info['pnet'] = {'num_boxes': 0, 'time_ms': pnet_time}
+            debug_info['rnet'] = {'num_boxes': 0, 'time_ms': 0.0}
+            debug_info['onet'] = {'num_boxes': 0, 'time_ms': 0.0}
+            debug_info['final'] = {'num_boxes': 0, 'total_time_ms': pnet_time}
+            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+
+        debug_info['pnet'] = {
+            'num_boxes': total_boxes.shape[0],
+            'boxes': total_boxes[:, :4].copy(),
+            'time_ms': pnet_time
+        }
+
+        # Stage 2: RNet
+        t0 = time.time()
+        total_boxes = self._rnet_stage(img_float, total_boxes)
         rnet_time = (time.time() - t0) * 1000
 
-        # Convert to [x, y, w, h] format for debug
+        if total_boxes is None:
+            debug_info['rnet'] = {'num_boxes': 0, 'time_ms': rnet_time}
+            debug_info['onet'] = {'num_boxes': 0, 'time_ms': 0.0}
+            debug_info['final'] = {'num_boxes': 0, 'total_time_ms': pnet_time + rnet_time}
+            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
+
+        # Convert to [x, y, w, h] for debug
         rnet_boxes_debug = np.zeros((total_boxes.shape[0], 4))
         rnet_boxes_debug[:, 0] = total_boxes[:, 0]
         rnet_boxes_debug[:, 1] = total_boxes[:, 1]
@@ -362,93 +481,13 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
 
         # Stage 3: ONet
         t0 = time.time()
-        total_boxes = self._square_bbox(total_boxes)
-
-        onet_input = []
-        valid_indices = []
-
-        for i in range(total_boxes.shape[0]):
-            x1 = int(max(0, total_boxes[i, 0]))
-            y1 = int(max(0, total_boxes[i, 1]))
-            x2 = int(min(img_w, total_boxes[i, 2]))
-            y2 = int(min(img_h, total_boxes[i, 3]))
-
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            face = img_float[y1:y2, x1:x2]
-            face = cv2.resize(face, (48, 48))
-            onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
-            valid_indices.append(i)
-
-        if len(onet_input) == 0:
-            onet_time = (time.time() - t0) * 1000
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': onet_time}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time + rnet_time + onet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
-
-        total_boxes = total_boxes[valid_indices]
-
-        # Run ONet
-        onet_outputs = []
-        for face_data in onet_input:
-            output = self._run_onet(face_data)
-            onet_outputs.append(output)
-
-        output = np.vstack(onet_outputs)
-        scores = 1.0 / (1.0 + np.exp(output[:, 0] - output[:, 1]))
-
-        keep = scores > self.thresholds[2]
-
-        total_boxes = total_boxes[keep]
-        scores = scores[keep]
-        reg = output[keep, 2:6]
-        landmarks = output[keep, 6:16]
-
-        if total_boxes.shape[0] == 0:
-            onet_time = (time.time() - t0) * 1000
-            debug_info['onet'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'time_ms': onet_time}
-            debug_info['final'] = {'num_boxes': 0, 'boxes': np.array([]), 'landmarks': np.array([]), 'total_time_ms': pnet_time + rnet_time + onet_time}
-            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
-
-        w = total_boxes[:, 2] - total_boxes[:, 0] + 1
-        h = total_boxes[:, 3] - total_boxes[:, 1] + 1
-        x1 = total_boxes[:, 0].copy()
-        y1 = total_boxes[:, 1].copy()
-
-        total_boxes[:, 0] = x1 + reg[:, 0] * w
-        total_boxes[:, 1] = y1 + reg[:, 1] * h
-        total_boxes[:, 2] = x1 + w + w * reg[:, 2]
-        total_boxes[:, 3] = y1 + h + h * reg[:, 3]
-        total_boxes[:, 4] = scores
-
-        # ONet outputs landmarks as [x0,x1,x2,x3,x4, y0,y1,y2,y3,y4] (x-first format)
-        landmarks = np.stack([landmarks[:, 0:5], landmarks[:, 5:10]], axis=2)
-
-        keep = self._nms(total_boxes, 0.7, 'Min')
-        total_boxes = total_boxes[keep]
-        landmarks = landmarks[keep]
-
-        # NO CALIBRATION - output raw bbox matching C++ raw output
-        # Calibration is applied downstream in the pipeline
-
-        # Denormalize landmarks using RAW (uncalibrated) bbox dimensions
-        # Landmarks are normalized [0,1] relative to the regressed bbox
-        for k in range(total_boxes.shape[0]):
-            w = total_boxes[k, 2] - total_boxes[k, 0]
-            h = total_boxes[k, 3] - total_boxes[k, 1]
-            for i in range(5):
-                landmarks[k, i, 0] = total_boxes[k, 0] + landmarks[k, i, 0] * w
-                landmarks[k, i, 1] = total_boxes[k, 1] + landmarks[k, i, 1] * h
-
+        bboxes, landmarks = self._onet_stage(img_float, total_boxes)
         onet_time = (time.time() - t0) * 1000
 
-        # Convert to [x, y, w, h] format
-        bboxes = np.zeros((total_boxes.shape[0], 4))
-        bboxes[:, 0] = total_boxes[:, 0]
-        bboxes[:, 1] = total_boxes[:, 1]
-        bboxes[:, 2] = total_boxes[:, 2] - total_boxes[:, 0]
-        bboxes[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
+        if bboxes is None:
+            debug_info['onet'] = {'num_boxes': 0, 'time_ms': onet_time}
+            debug_info['final'] = {'num_boxes': 0, 'total_time_ms': pnet_time + rnet_time + onet_time}
+            return np.empty((0, 4)), np.empty((0, 5, 2)), debug_info
 
         debug_info['onet'] = {
             'num_boxes': bboxes.shape[0],
