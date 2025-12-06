@@ -373,15 +373,24 @@ class ONNXMTCNN(PurePythonMTCNN_Optimized):
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Denormalize landmarks using raw bbox dimensions
-        w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
-        h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
-        x1 = total_boxes[:, 0].reshape(-1, 1)
-        y1 = total_boxes[:, 1].reshape(-1, 1)
-        landmarks[:, :, 0] = x1 + landmarks[:, :, 0] * w
-        landmarks[:, :, 1] = y1 + landmarks[:, :, 1] * h
+        # Apply calibration to bbox (C++ denormalizes landmarks using calibrated bbox)
+        # Calibration formula from C++ FaceDetectorMTCNN.cpp
+        raw_w = total_boxes[:, 2] - total_boxes[:, 0]
+        raw_h = total_boxes[:, 3] - total_boxes[:, 1]
+        cal_x = total_boxes[:, 0] + raw_w * (-0.0075)
+        cal_y = total_boxes[:, 1] + raw_h * 0.2459
+        cal_w = raw_w * 1.0323
+        cal_h = raw_h * 0.7751
 
-        # Convert to (x, y, width, height) format
+        # Denormalize landmarks using CALIBRATED bbox dimensions (matching C++)
+        cal_x_col = cal_x.reshape(-1, 1)
+        cal_y_col = cal_y.reshape(-1, 1)
+        cal_w_col = cal_w.reshape(-1, 1)
+        cal_h_col = cal_h.reshape(-1, 1)
+        landmarks[:, :, 0] = cal_x_col + landmarks[:, :, 0] * cal_w_col
+        landmarks[:, :, 1] = cal_y_col + landmarks[:, :, 1] * cal_h_col
+
+        # Convert to (x, y, width, height) format - return RAW bbox (not calibrated)
         bboxes = np.zeros((total_boxes.shape[0], 4))
         bboxes[:, 0] = total_boxes[:, 0]
         bboxes[:, 1] = total_boxes[:, 1]
