@@ -323,7 +323,8 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         scores = scores[keep]
         reg = output[keep, 2:6]
 
-        # NMS
+        # NMS - update column 4 with RNet scores BEFORE NMS (critical for correct box selection)
+        total_boxes[:, 4] = scores
         keep = self._nms(total_boxes, 0.7, 'Union')
         total_boxes = total_boxes[keep]
         scores = scores[keep]
@@ -429,21 +430,11 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Apply final calibration (CRITICAL for accuracy!) - VECTORIZED
-        # This adjusts the bbox to be tight around facial landmarks
-        w = total_boxes[:, 2] - total_boxes[:, 0]
-        h = total_boxes[:, 3] - total_boxes[:, 1]
-        new_x1 = total_boxes[:, 0] + w * -0.0075
-        new_y1 = total_boxes[:, 1] + h * 0.2459
-        new_width = w * 1.0323
-        new_height = h * 0.7751
-        total_boxes[:, 0] = new_x1
-        total_boxes[:, 1] = new_y1
-        total_boxes[:, 2] = new_x1 + new_width
-        total_boxes[:, 3] = new_y1 + new_height
+        # NO CALIBRATION - output raw bbox matching C++ raw output
+        # Calibration is applied downstream in the pipeline
 
-        # Denormalize landmarks using CALIBRATED bbox dimensions - VECTORIZED
-        # This ensures landmarks and bbox are properly aligned
+        # Denormalize landmarks using RAW (uncalibrated) bbox dimensions - VECTORIZED
+        # Landmarks are normalized [0,1] relative to the regressed bbox
         w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
         h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
         x1 = total_boxes[:, 0].reshape(-1, 1)
@@ -606,6 +597,8 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         scores = scores[keep]
         reg = output[keep, 2:6]
 
+        # NMS - update column 4 with RNet scores BEFORE NMS (critical for correct box selection)
+        total_boxes[:, 4] = scores
         keep = self._nms(total_boxes, 0.7, 'Union')
         total_boxes = total_boxes[keep]
         scores = scores[keep]
@@ -729,23 +722,14 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         total_boxes = total_boxes[keep]
         landmarks = landmarks[keep]
 
-        # CAPTURE: Raw normalized landmarks and bbox BEFORE calibration (for C++ comparison)
+        # CAPTURE: Raw normalized landmarks (for C++ comparison)
         landmarks_raw_normalized = landmarks.copy()  # [0-1] range, ONet output
-        bbox_before_calibration = total_boxes[:, :4].copy()  # [x1, y1, x2, y2] BEFORE calibration
 
-        # Apply calibration - VECTORIZED
-        w = total_boxes[:, 2] - total_boxes[:, 0]
-        h = total_boxes[:, 3] - total_boxes[:, 1]
-        new_x1 = total_boxes[:, 0] + w * -0.0075
-        new_y1 = total_boxes[:, 1] + h * 0.2459
-        new_width = w * 1.0323
-        new_height = h * 0.7751
-        total_boxes[:, 0] = new_x1
-        total_boxes[:, 1] = new_y1
-        total_boxes[:, 2] = new_x1 + new_width
-        total_boxes[:, 3] = new_y1 + new_height
+        # NO CALIBRATION - output raw bbox matching C++ raw output
+        # Calibration is applied downstream in the pipeline
 
-        # Denormalize landmarks using CALIBRATED bbox dimensions - VECTORIZED
+        # Denormalize landmarks using RAW (uncalibrated) bbox dimensions - VECTORIZED
+        # Landmarks are normalized [0,1] relative to the regressed bbox
         w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
         h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
         x1 = total_boxes[:, 0].reshape(-1, 1)
@@ -762,19 +746,11 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         bboxes[:, 2] = total_boxes[:, 2] - total_boxes[:, 0]
         bboxes[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
 
-        # Convert uncalibrated bbox to [x, y, w, h] format for debug
-        bbox_uncal = np.zeros((bbox_before_calibration.shape[0], 4))
-        bbox_uncal[:, 0] = bbox_before_calibration[:, 0]
-        bbox_uncal[:, 1] = bbox_before_calibration[:, 1]
-        bbox_uncal[:, 2] = bbox_before_calibration[:, 2] - bbox_before_calibration[:, 0]
-        bbox_uncal[:, 3] = bbox_before_calibration[:, 3] - bbox_before_calibration[:, 1]
-
         debug_info['onet'] = {
             'num_boxes': bboxes.shape[0],
             'boxes': bboxes.copy(),
             'landmarks': landmarks.copy(),
             'landmarks_raw_normalized': landmarks_raw_normalized.copy(),  # Raw ONet output [0-1]
-            'bbox_before_calibration': bbox_uncal.copy(),  # For C++ comparison
             'time_ms': onet_time
         }
 
@@ -937,7 +913,8 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             frame_scores = frame_scores[keep]
             frame_reg = frame_output[keep, 2:6]
 
-            # NMS
+            # NMS - update column 4 with RNet scores BEFORE NMS (critical for correct box selection)
+            frame_boxes[:, 4] = frame_scores
             keep = self._nms(frame_boxes, 0.7, 'Union')
             frame_boxes = frame_boxes[keep]
             frame_scores = frame_scores[keep]
@@ -1068,19 +1045,11 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             total_boxes = total_boxes[keep]
             landmarks = landmarks[keep]
 
-            # Apply final calibration - VECTORIZED
-            w = total_boxes[:, 2] - total_boxes[:, 0]
-            h = total_boxes[:, 3] - total_boxes[:, 1]
-            new_x1 = total_boxes[:, 0] + w * -0.0075
-            new_y1 = total_boxes[:, 1] + h * 0.2459
-            new_width = w * 1.0323
-            new_height = h * 0.7751
-            total_boxes[:, 0] = new_x1
-            total_boxes[:, 1] = new_y1
-            total_boxes[:, 2] = new_x1 + new_width
-            total_boxes[:, 3] = new_y1 + new_height
+            # NO CALIBRATION - output raw bbox matching C++ raw output
+            # Calibration is applied downstream in the pipeline
 
-            # Denormalize landmarks using CALIBRATED bbox dimensions - VECTORIZED
+            # Denormalize landmarks using RAW (uncalibrated) bbox dimensions - VECTORIZED
+            # Landmarks are normalized [0,1] relative to the regressed bbox
             w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
             h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
             x1 = total_boxes[:, 0].reshape(-1, 1)
