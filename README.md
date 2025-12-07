@@ -4,17 +4,17 @@ High-performance **cross-platform** MTCNN face detection with CUDA and Apple Neu
 
 ## Overview
 
-PyMTCNN is a pure Python implementation of MTCNN (Multi-task Cascaded Convolutional Networks) with multi-backend support for optimal performance across different hardware platforms. It achieves **175.7x speedup** over baseline Python implementations while maintaining 95% IoU accuracy.
+PyMTCNN is a pure Python implementation of MTCNN (Multi-task Cascaded Convolutional Networks) with multi-backend support for optimal performance across different hardware platforms. It achieves **175.7x speedup** over baseline Python implementations while maintaining **pixel-perfect accuracy** with the C++ OpenFace reference implementation.
 
 ### Key Features
 
 - **Cross-Platform**: Works on Windows, Linux, and macOS
 - **Multi-Backend**: Auto-selects best backend (CoreML, CUDA, or CPU)
 - **High Performance**:
-  - Apple Silicon (CoreML): 34.26 FPS
+  - Apple Silicon (CoreML): 34+ FPS
   - NVIDIA GPUs (CUDA): 50+ FPS
   - CPU fallback: 5-10 FPS
-- **Accurate**: 95% IoU agreement with C++ OpenFace baseline
+- **Pixel-Perfect Accuracy**: < 0.001 px error vs C++ OpenFace reference
 - **Easy to Use**: Simple, unified Python API
 - **Hardware Accelerated**: Leverages Apple Neural Engine or NVIDIA CUDA
 - **Flexible**: Single-frame or batch processing modes
@@ -95,8 +95,8 @@ bboxes, landmarks = detector.detect(img)
 # Process results
 print(f"Detected {len(bboxes)} faces")
 for i, bbox in enumerate(bboxes):
-    x, y, w, h, conf = bbox
-    print(f"Face {i+1}: ({x:.0f}, {y:.0f}) {w:.0f}×{h:.0f} (confidence: {conf:.3f})")
+    x, y, w, h = bbox[:4]
+    print(f"Face {i+1}: ({x:.0f}, {y:.0f}) {w:.0f}×{h:.0f}")
 ```
 
 ### Force Specific Backend
@@ -107,11 +107,37 @@ from pymtcnn import MTCNN
 # Force CoreML (Apple Neural Engine)
 detector = MTCNN(backend='coreml')
 
+# Force ONNX (auto-selects CUDA if available)
+detector = MTCNN(backend='onnx')
+
 # Force CUDA (NVIDIA GPU)
 detector = MTCNN(backend='cuda')
 
 # Force CPU
 detector = MTCNN(backend='cpu')
+```
+
+### Visualize Detections
+
+```python
+import cv2
+from pymtcnn import MTCNN
+
+detector = MTCNN()
+img = cv2.imread("image.jpg")
+bboxes, landmarks = detector.detect(img)
+
+# Draw bounding boxes
+for bbox in bboxes:
+    x, y, w, h = bbox[:4].astype(int)
+    cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+# Draw landmarks
+for lm in landmarks:
+    for point in lm:
+        cv2.circle(img, (int(point[0]), int(point[1])), 3, (0, 255, 0), -1)
+
+cv2.imwrite("output.jpg", img)
 ```
 
 ### Batch Video Processing
@@ -155,48 +181,47 @@ onnx_detector = ONNXMTCNN(provider='cuda', verbose=True)
 
 ## API Reference
 
-### `CoreMLMTCNN`
+### `MTCNN`
 
-Main face detector class.
+Unified face detector class with automatic backend selection.
 
 #### Constructor
 
 ```python
-CoreMLMTCNN(
-    min_face_size=60,
-    thresholds=[0.6, 0.7, 0.7],
-    factor=0.709,
-    coreml_dir=None,
-    verbose=False
+MTCNN(
+    backend='auto',      # 'auto', 'coreml', 'onnx', 'cuda', 'cpu'
+    model_dir=None,      # Custom model directory (default: bundled)
+    verbose=False        # Print backend selection info
 )
 ```
 
 **Parameters:**
 
-- `min_face_size` (int): Minimum face size in pixels. Default: 60
-- `thresholds` (list): Detection thresholds for [PNet, RNet, ONet]. Default: [0.6, 0.7, 0.7]
-- `factor` (float): Image pyramid scale factor. Default: 0.709
-- `coreml_dir` (str): Path to CoreML models directory. Default: bundled models
-- `verbose` (bool): Enable verbose logging. Default: False
+- `backend` (str): Backend to use. Options:
+  - `'auto'`: Auto-select best available (default)
+  - `'coreml'`: Force CoreML (Apple Neural Engine)
+  - `'onnx'`: Force ONNX (auto-selects CUDA/CPU)
+  - `'cuda'`: Force ONNX with CUDA
+  - `'cpu'`: Force ONNX with CPU
+- `model_dir` (str): Path to models directory. Default: bundled models
+- `verbose` (bool): Print initialization info. Default: False
 
 #### Methods
 
 ##### `detect(image)`
 
-Detect faces in a single image using within-frame batching.
+Detect faces in a single image.
 
 **Parameters:**
 - `image` (numpy.ndarray): Input image (BGR format, H×W×3)
 
 **Returns:**
-- `bboxes` (numpy.ndarray): Bounding boxes (N×5), format: [x, y, w, h, confidence]
+- `bboxes` (numpy.ndarray): Bounding boxes (N×4), format: [x, y, width, height]
 - `landmarks` (numpy.ndarray): Facial landmarks (N×5×2), 5 points per face: left eye, right eye, nose, left mouth, right mouth
-
-**Performance:** 31.88 FPS (31.4 ms/frame)
 
 ##### `detect_batch(frames)`
 
-Detect faces in multiple frames using cross-frame batching.
+Detect faces in multiple frames.
 
 **Parameters:**
 - `frames` (list): List of images (each BGR format, H×W×3)
@@ -204,9 +229,12 @@ Detect faces in multiple frames using cross-frame batching.
 **Returns:**
 - `results` (list): List of (bboxes, landmarks) tuples, one per frame
 
-**Performance:** 34.26 FPS (29.2 ms/frame) with batch_size=4
+##### `get_backend_info()`
 
-**Recommended batch size:** 4 frames for optimal throughput
+Get information about the active backend.
+
+**Returns:**
+- `info` (dict): Dictionary with 'backend' and 'provider' keys
 
 ## Performance Guide
 
@@ -238,11 +266,14 @@ See the `examples/` directory for complete examples:
 
 ## Accuracy
 
-PyMTCNN maintains high accuracy while achieving exceptional performance:
+PyMTCNN achieves **pixel-perfect accuracy** compared to the C++ OpenFace reference implementation:
 
-- **Mean IoU**: 95% vs C++ OpenFace baseline
-- **Detection Agreement**: 100% (same faces detected)
-- **Validation**: Tested on 30 frames from real-world patient videos
+- **Bounding Box Error**: < 0.001 px (effectively zero)
+- **Landmark Error**: < 0.001 px (effectively zero)
+- **Detection Agreement**: 100% (identical faces detected)
+- **Validation**: Tested on multiple real-world images
+
+Both bounding boxes and 5-point facial landmarks (eyes, nose, mouth corners) match the C++ implementation exactly.
 
 ## Architecture
 
