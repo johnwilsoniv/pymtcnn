@@ -1,55 +1,62 @@
 #!/usr/bin/env python3
 """
-OPTIMIZED Pure Python MTCNN - Production Version
+MTCNN Base Classes
 
-Performance improvements:
-- Uses optimized CNN loader (vectorized im2col, PReLU, MaxPool)
-- Removed ALL debug file I/O operations
-- Removed verbose debug logging
-- Optimized NumPy operations
-
-All accuracy-critical logic PRESERVED:
-- Exact PReLU, MaxPool rounding, BGR→RGB flipping
-- C++ bbox calibration coefficients
-- All threshold and NMS logic
+Provides shared functionality for all MTCNN backends:
+- MTCNNBase: Abstract base with shared pipeline methods
+- PurePythonMTCNN: Concrete implementation using pure Python CNN
 """
 
 import numpy as np
 import cv2
 import os
+from abc import ABC, abstractmethod
 
 
-class PurePythonMTCNN_Optimized:
-    """Optimized Pure Python CNN MTCNN"""
+class MTCNNBase(ABC):
+    """
+    Abstract base class for MTCNN implementations.
 
-    def __init__(self, model_dir=None):
-        # Lazy import to avoid dependency when using CoreML/ONNX backends
-        try:
-            from .cpp_cnn_loader_optimized import CPPCNN
-        except ImportError:
-            raise ImportError(
-                "cpp_cnn_loader_optimized is required for base MTCNN. "
-                "Use CoreMLMTCNN or ONNXMTCNN instead."
-            )
+    Provides shared methods for bbox processing, NMS, and preprocessing.
+    Subclasses must implement _run_pnet, _run_rnet, _run_onet.
+    """
 
-        if model_dir is None:
-            model_dir = os.path.expanduser(
-                "~/repo/fea_tool/external_libs/openFace/OpenFace/matlab_version/"
-                "face_detection/mtcnn/convert_to_cpp/"
-            )
-
-        # Load optimized Pure Python CNNs
-        self.pnet = CPPCNN(os.path.join(model_dir, "PNet.dat"))
-        self.rnet = CPPCNN(os.path.join(model_dir, "RNet.dat"))
-        self.onet = CPPCNN(os.path.join(model_dir, "ONet.dat"))
-
+    def __init__(self):
         # MTCNN parameters (matching C++)
         self.thresholds = [0.6, 0.7, 0.7]
         self.min_face_size = 60
         self.factor = 0.709
 
+    # ==================== Abstract Methods (implement in subclass) ====================
+
+    @abstractmethod
+    def _run_pnet(self, img_data):
+        """Run PNet on preprocessed image data. Returns (1, C, H, W) output."""
+        pass
+
+    @abstractmethod
+    def _run_rnet_batch(self, img_data_list):
+        """Run RNet on batch of crops. Returns (N, 6) output."""
+        pass
+
+    @abstractmethod
+    def _run_onet_batch(self, img_data_list):
+        """Run ONet on batch of crops. Returns (N, 16) output."""
+        pass
+
+    # ==================== Shared Preprocessing ====================
+
     def _preprocess(self, img: np.ndarray, flip_bgr_to_rgb: bool = True) -> np.ndarray:
-        """Preprocess image - PRESERVES accuracy-critical BGR→RGB flip"""
+        """
+        Preprocess image for network input.
+
+        Args:
+            img: Input image (H, W, 3)
+            flip_bgr_to_rgb: Whether to flip BGR to RGB
+
+        Returns:
+            Preprocessed image (C, H, W) normalized to [-1, 1]
+        """
         img_norm = (img.astype(np.float32) - 127.5) * 0.0078125
         img_chw = np.transpose(img_norm, (2, 0, 1))
 
@@ -58,35 +65,71 @@ class PurePythonMTCNN_Optimized:
 
         return img_chw
 
-    def _run_pnet(self, img_data):
-        """Run PNet using optimized CNN"""
-        outputs = self.pnet(img_data)
-        output = outputs[-1]
-        return output[np.newaxis, :, :, :]
+    # ==================== Shared Crop Extraction ====================
 
-    def _run_rnet(self, img_data):
-        """Run RNet using optimized CNN"""
-        outputs = self.rnet(img_data)
-        return outputs[-1]
-
-    def _run_onet(self, img_data):
-        """Run ONet using optimized CNN"""
-        outputs = self.onet(img_data)
-        return outputs[-1]
-
-    def detect(self, img: np.ndarray):
+    def _extract_crop(self, img_float, box, target_size):
         """
-        Detect faces using optimized Pure Python CNN MTCNN
+        Extract and resize crop from image matching C++ MTCNN extraction.
+
+        C++ uses (x-1, y-1) start and (w+1, h+1) buffer for proper edge handling.
 
         Args:
-            img: Input image (H, W, 3) in BGR format
+            img_float: Float32 image (H, W, 3)
+            box: Bounding box [x1, y1, x2, y2, score, ...]
+            target_size: Output size (e.g., 24 for RNet, 48 for ONet)
 
         Returns:
-            bboxes: (N, 4) array of [x, y, w, h]
-            landmarks: (N, 5, 2) array of facial landmarks
+            Preprocessed crop (C, H, W) or None if invalid
         """
-        img_h, img_w = img.shape[:2]
-        img_float = img.astype(np.float32)
+        img_h, img_w = img_float.shape[:2]
+
+        box_x = box[0]
+        box_y = box[1]
+        box_w = box[2] - box[0]
+        box_h = box[3] - box[1]
+
+        width_target = int(box_w + 1)
+        height_target = int(box_h + 1)
+
+        # C++ uses x-1, y-1 as extraction start
+        start_x_in = max(int(box_x - 1), 0)
+        start_y_in = max(int(box_y - 1), 0)
+        end_x_in = min(int(box_x + width_target - 1), img_w)
+        end_y_in = min(int(box_y + height_target - 1), img_h)
+
+        # Output buffer offsets (for edge cases)
+        start_x_out = max(int(-box_x + 1), 0)
+        start_y_out = max(int(-box_y + 1), 0)
+
+        if end_x_in <= start_x_in or end_y_in <= start_y_in:
+            return None
+
+        # Create zero-padded buffer of size (w+1, h+1)
+        tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
+
+        # Copy image region to buffer
+        copy_h = end_y_in - start_y_in
+        copy_w = end_x_in - start_x_in
+        tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
+            img_float[start_y_in:end_y_in, start_x_in:end_x_in]
+
+        # Resize and preprocess
+        face = cv2.resize(tmp, (target_size, target_size))
+        return self._preprocess(face, flip_bgr_to_rgb=True)
+
+    # ==================== Shared Pipeline Stages ====================
+
+    def _pnet_stage(self, img_float):
+        """
+        Run PNet stage: pyramid processing, box generation, NMS.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+
+        Returns:
+            total_boxes: (N, 9) array after PNet or None if no detections
+        """
+        img_h, img_w = img_float.shape[:2]
 
         # Build image pyramid
         min_size = self.min_face_size
@@ -100,7 +143,6 @@ class PurePythonMTCNN_Optimized:
             scale *= self.factor
             min_l *= self.factor
 
-        # Stage 1: PNet
         total_boxes = []
 
         for scale in scales:
@@ -128,7 +170,7 @@ class PurePythonMTCNN_Optimized:
                 total_boxes.append(boxes)
 
         if len(total_boxes) == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None
 
         total_boxes = np.vstack(total_boxes)
 
@@ -137,78 +179,63 @@ class PurePythonMTCNN_Optimized:
         total_boxes = total_boxes[keep]
 
         if total_boxes.shape[0] == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None
 
         # Apply PNet bbox regression
         total_boxes = self._apply_bbox_regression(total_boxes)
+        return total_boxes
 
-        # Stage 2: RNet
+    def _rnet_stage(self, img_float, total_boxes):
+        """
+        Run RNet stage: crop extraction, scoring, filtering, NMS, regression.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+            total_boxes: (N, 9) boxes from PNet
+
+        Returns:
+            total_boxes: (N, 9) array after RNet or None if no detections
+        """
         total_boxes = self._square_bbox(total_boxes)
 
         rnet_input = []
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            bbox_x = total_boxes[i, 0]
-            bbox_y = total_boxes[i, 1]
-            bbox_w = total_boxes[i, 2] - total_boxes[i, 0]
-            bbox_h = total_boxes[i, 3] - total_boxes[i, 1]
-
-            # C++ RNet cropping with +1 padding
-            width_target = int(bbox_w + 1)
-            height_target = int(bbox_h + 1)
-
-            start_x_in = max(int(bbox_x - 1), 0)
-            start_y_in = max(int(bbox_y - 1), 0)
-            end_x_in = min(int(bbox_x + width_target - 1), img_w)
-            end_y_in = min(int(bbox_y + height_target - 1), img_h)
-
-            start_x_out = max(int(-bbox_x + 1), 0)
-            start_y_out = max(int(-bbox_y + 1), 0)
-            end_x_out = min(int(width_target - (bbox_x + bbox_w - img_w)), width_target)
-            end_y_out = min(int(height_target - (bbox_y + bbox_h - img_h)), height_target)
-
-            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
-            tmp[start_y_out:end_y_out, start_x_out:end_x_out] = \
-                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
-
-            face = cv2.resize(tmp, (24, 24))
-            rnet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
-            valid_indices.append(i)
+            crop = self._extract_crop(img_float, total_boxes[i], 24)
+            if crop is not None:
+                rnet_input.append(crop)
+                valid_indices.append(i)
 
         if len(rnet_input) == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None
 
         total_boxes = total_boxes[valid_indices]
 
         # Run RNet
-        rnet_outputs = []
-        for face_data in rnet_input:
-            output = self._run_rnet(face_data)
-            rnet_outputs.append(output)
-
-        output = np.vstack(rnet_outputs)
+        output = self._run_rnet_batch(rnet_input)
         scores = 1.0 / (1.0 + np.exp(output[:, 0] - output[:, 1]))
 
         # Filter by threshold
         keep = scores > self.thresholds[1]
-
-        if not keep.any():
-            return np.empty((0, 4)), np.empty((0, 5, 2))
-
         total_boxes = total_boxes[keep]
         scores = scores[keep]
         reg = output[keep, 2:6]
 
-        # NMS - update column 4 with RNet scores before NMS
+        if total_boxes.shape[0] == 0:
+            return None
+
+        # Update scores for NMS
         total_boxes[:, 4] = scores
+
+        # NMS
         keep = self._nms(total_boxes, 0.7, 'Union')
         total_boxes = total_boxes[keep]
         scores = scores[keep]
         reg = reg[keep]
 
         if total_boxes.shape[0] == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None
 
         # Apply RNet regression
         w = total_boxes[:, 2] - total_boxes[:, 0]
@@ -222,73 +249,55 @@ class PurePythonMTCNN_Optimized:
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        # Stage 3: ONet
+        return total_boxes
+
+    def _onet_stage(self, img_float, total_boxes):
+        """
+        Run ONet stage: crop extraction, scoring, landmarks, NMS.
+
+        Args:
+            img_float: Float32 image (H, W, 3)
+            total_boxes: (N, 9) boxes from RNet
+
+        Returns:
+            bboxes: (N, 4) as [x, y, w, h]
+            landmarks: (N, 5, 2) facial landmarks
+        """
         total_boxes = self._square_bbox(total_boxes)
+
+        # Save squared box dimensions BEFORE filtering - needed for landmark denormalization
+        # ONet landmarks are normalized relative to the 48x48 crop from this squared box
+        squared_boxes = total_boxes.copy()
 
         onet_input = []
         valid_indices = []
 
         for i in range(total_boxes.shape[0]):
-            # C++ matching extraction: use (x-1, y-1) start and (w+1, h+1) buffer
-            box_x = total_boxes[i, 0]
-            box_y = total_boxes[i, 1]
-            box_w = total_boxes[i, 2] - total_boxes[i, 0]
-            box_h = total_boxes[i, 3] - total_boxes[i, 1]
-
-            width_target = int(box_w + 1)
-            height_target = int(box_h + 1)
-
-            # C++ uses x-1, y-1 as extraction start
-            start_x_in = max(int(box_x - 1), 0)
-            start_y_in = max(int(box_y - 1), 0)
-            end_x_in = min(int(box_x + width_target - 1), img_w)
-            end_y_in = min(int(box_y + height_target - 1), img_h)
-
-            # Output buffer offsets (for edge cases)
-            start_x_out = max(int(-box_x + 1), 0)
-            start_y_out = max(int(-box_y + 1), 0)
-
-            if end_x_in <= start_x_in or end_y_in <= start_y_in:
-                continue
-
-            # Create zero-padded buffer of size (w+1, h+1)
-            tmp = np.zeros((height_target, width_target, 3), dtype=np.float32)
-
-            # Copy image region to buffer
-            copy_h = end_y_in - start_y_in
-            copy_w = end_x_in - start_x_in
-            tmp[start_y_out:start_y_out+copy_h, start_x_out:start_x_out+copy_w] = \
-                img_float[start_y_in:end_y_in, start_x_in:end_x_in]
-
-            # Resize to 48x48 and preprocess
-            face = cv2.resize(tmp, (48, 48))
-            onet_input.append(self._preprocess(face, flip_bgr_to_rgb=True))
-            valid_indices.append(i)
+            crop = self._extract_crop(img_float, total_boxes[i], 48)
+            if crop is not None:
+                onet_input.append(crop)
+                valid_indices.append(i)
 
         if len(onet_input) == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None, None
 
         total_boxes = total_boxes[valid_indices]
+        squared_boxes = squared_boxes[valid_indices]
 
         # Run ONet
-        onet_outputs = []
-        for face_data in onet_input:
-            output = self._run_onet(face_data)
-            onet_outputs.append(output)
-
-        output = np.vstack(onet_outputs)
+        output = self._run_onet_batch(onet_input)
         scores = 1.0 / (1.0 + np.exp(output[:, 0] - output[:, 1]))
 
         # Filter by threshold
         keep = scores > self.thresholds[2]
-
         total_boxes = total_boxes[keep]
+        squared_boxes = squared_boxes[keep]
         scores = scores[keep]
         reg = output[keep, 2:6]
         landmarks = output[keep, 6:16]
 
         if total_boxes.shape[0] == 0:
-            return np.empty((0, 4)), np.empty((0, 5, 2))
+            return None, None
 
         # Apply ONet regression (with +1)
         w = total_boxes[:, 2] - total_boxes[:, 0] + 1
@@ -302,24 +311,25 @@ class PurePythonMTCNN_Optimized:
         total_boxes[:, 3] = y1 + h + h * reg[:, 3]
         total_boxes[:, 4] = scores
 
-        # ONet outputs landmarks as [x0,x1,x2,x3,x4, y0,y1,y2,y3,y4] (x-first format)
-        # Reshape correctly to (N, 5, 2) where [:, i, 0] = x_i, [:, i, 1] = y_i
+        # Reshape landmarks: [x0,x1,x2,x3,x4, y0,y1,y2,y3,y4] -> (N, 5, 2)
         landmarks = np.stack([landmarks[:, 0:5], landmarks[:, 5:10]], axis=2)
 
         # Final NMS
         keep = self._nms(total_boxes, 0.7, 'Min')
         total_boxes = total_boxes[keep]
+        squared_boxes = squared_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Denormalize landmarks using raw bbox dimensions (matching C++ output)
-        w = (total_boxes[:, 2] - total_boxes[:, 0]).reshape(-1, 1)
-        h = (total_boxes[:, 3] - total_boxes[:, 1]).reshape(-1, 1)
-        x1 = total_boxes[:, 0].reshape(-1, 1)
-        y1 = total_boxes[:, 1].reshape(-1, 1)
-        landmarks[:, :, 0] = x1 + landmarks[:, :, 0] * w
-        landmarks[:, :, 1] = y1 + landmarks[:, :, 1] * h
+        # Denormalize landmarks using SQUARED box (the ONet input box)
+        # ONet outputs normalized landmarks relative to the 48x48 crop from squared box
+        sq_x = squared_boxes[:, 0].reshape(-1, 1)
+        sq_y = squared_boxes[:, 1].reshape(-1, 1)
+        sq_w = (squared_boxes[:, 2] - squared_boxes[:, 0]).reshape(-1, 1)
+        sq_h = (squared_boxes[:, 3] - squared_boxes[:, 1]).reshape(-1, 1)
+        landmarks[:, :, 0] = sq_x + landmarks[:, :, 0] * sq_w
+        landmarks[:, :, 1] = sq_y + landmarks[:, :, 1] * sq_h
 
-        # Convert to (x, y, width, height) format
+        # Convert to (x, y, width, height) format - return RAW bbox (after regression)
         bboxes = np.zeros((total_boxes.shape[0], 4))
         bboxes[:, 0] = total_boxes[:, 0]
         bboxes[:, 1] = total_boxes[:, 1]
@@ -327,6 +337,8 @@ class PurePythonMTCNN_Optimized:
         bboxes[:, 3] = total_boxes[:, 3] - total_boxes[:, 1]
 
         return bboxes, landmarks
+
+    # ==================== Shared Utility Methods ====================
 
     def _generate_bboxes(self, score_map, reg_map, scale, threshold):
         """Generate bounding boxes from PNet output (C++ matching)"""
@@ -336,7 +348,7 @@ class PurePythonMTCNN_Optimized:
         t_index = np.where(score_map[:, :, 1] >= threshold)
 
         if t_index[0].size == 0:
-            return np.array([])
+            return np.array([]).reshape(0, 9)
 
         dx1, dy1, dx2, dy2 = [reg_map[t_index[0], t_index[1], i] for i in range(4)]
         reg = np.array([dx1, dy1, dx2, dy2])
@@ -394,26 +406,17 @@ class PurePythonMTCNN_Optimized:
         """Apply bbox regression (C++ matching)"""
         result = bboxes.copy()
 
-        for i in range(bboxes.shape[0]):
-            x1, y1, x2, y2 = bboxes[i, 0:4]
-            dx1, dy1, dx2, dy2 = bboxes[i, 5:9]
+        w = bboxes[:, 2] - bboxes[:, 0]
+        h = bboxes[:, 3] - bboxes[:, 1]
 
-            w = x2 - x1
-            h = y2 - y1
+        if add1:
+            w = w + 1
+            h = h + 1
 
-            if add1:
-                w = w + 1
-                h = h + 1
-
-            new_x1 = x1 + dx1 * w
-            new_y1 = y1 + dy1 * h
-            new_x2 = x1 + w + w * dx2
-            new_y2 = y1 + h + h * dy2
-
-            result[i, 0] = new_x1
-            result[i, 1] = new_y1
-            result[i, 2] = new_x2
-            result[i, 3] = new_y2
+        result[:, 0] = bboxes[:, 0] + bboxes[:, 5] * w
+        result[:, 1] = bboxes[:, 1] + bboxes[:, 6] * h
+        result[:, 2] = bboxes[:, 0] + w + w * bboxes[:, 7]
+        result[:, 3] = bboxes[:, 1] + h + h * bboxes[:, 8]
 
         return result
 
@@ -433,3 +436,93 @@ class PurePythonMTCNN_Optimized:
         square_bboxes[:, 2] = new_x1 + max_side_int
         square_bboxes[:, 3] = new_y1 + max_side_int
         return square_bboxes
+
+    # ==================== Main Detection Method ====================
+
+    def detect(self, img: np.ndarray):
+        """
+        Detect faces in image.
+
+        Args:
+            img: Input image (H, W, 3) in BGR format
+
+        Returns:
+            bboxes: (N, 4) array of [x, y, w, h]
+            landmarks: (N, 5, 2) array of facial landmarks
+        """
+        img_float = img.astype(np.float32)
+
+        # Stage 1: PNet
+        total_boxes = self._pnet_stage(img_float)
+        if total_boxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        # Stage 2: RNet
+        total_boxes = self._rnet_stage(img_float, total_boxes)
+        if total_boxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        # Stage 3: ONet
+        bboxes, landmarks = self._onet_stage(img_float, total_boxes)
+        if bboxes is None:
+            return np.empty((0, 4)), np.empty((0, 5, 2))
+
+        return bboxes, landmarks
+
+
+class PurePythonMTCNN(MTCNNBase):
+    """
+    Pure Python MTCNN implementation using optimized CNN loader.
+
+    This is a fallback when CoreML/ONNX are not available.
+    Uses the cpp_cnn_loader to load C++ .dat model files.
+    """
+
+    def __init__(self, model_dir=None):
+        super().__init__()
+
+        # Lazy import to avoid dependency when using CoreML/ONNX backends
+        try:
+            from .cpp_cnn_loader_optimized import CPPCNN
+        except ImportError:
+            raise ImportError(
+                "cpp_cnn_loader_optimized is required for PurePythonMTCNN. "
+                "Use CoreMLMTCNN or ONNXMTCNN instead."
+            )
+
+        if model_dir is None:
+            model_dir = os.path.expanduser(
+                "~/repo/fea_tool/external_libs/openFace/OpenFace/matlab_version/"
+                "face_detection/mtcnn/convert_to_cpp/"
+            )
+
+        # Load Pure Python CNNs
+        self.pnet = CPPCNN(os.path.join(model_dir, "PNet.dat"))
+        self.rnet = CPPCNN(os.path.join(model_dir, "RNet.dat"))
+        self.onet = CPPCNN(os.path.join(model_dir, "ONet.dat"))
+
+    def _run_pnet(self, img_data):
+        """Run PNet using Pure Python CNN"""
+        outputs = self.pnet(img_data)
+        output = outputs[-1]
+        return output[np.newaxis, :, :, :]
+
+    def _run_rnet_batch(self, img_data_list):
+        """Run RNet on batch (sequential for Pure Python)"""
+        outputs = []
+        for img_data in img_data_list:
+            output = self.rnet(img_data)
+            outputs.append(output[-1])
+        return np.vstack(outputs)
+
+    def _run_onet_batch(self, img_data_list):
+        """Run ONet on batch (sequential for Pure Python)"""
+        outputs = []
+        for img_data in img_data_list:
+            output = self.onet(img_data)
+            outputs.append(output[-1])
+        return np.vstack(outputs)
+
+
+# Backward compatibility alias
+PurePythonMTCNN_Optimized = PurePythonMTCNN
