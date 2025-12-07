@@ -311,6 +311,10 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         """
         total_boxes = self._square_bbox(total_boxes)
 
+        # Save squared box dimensions BEFORE filtering - needed for landmark denormalization
+        # ONet landmarks are normalized relative to the 48x48 crop from this squared box
+        squared_boxes = total_boxes.copy()
+
         onet_input = []
         valid_indices = []
 
@@ -324,6 +328,7 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
             return None, None
 
         total_boxes = total_boxes[valid_indices]
+        squared_boxes = squared_boxes[valid_indices]
 
         # Run ONet
         output = self._run_onet_batch(onet_input)
@@ -332,6 +337,7 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         # Filter by threshold
         keep = scores > self.thresholds[2]
         total_boxes = total_boxes[keep]
+        squared_boxes = squared_boxes[keep]
         scores = scores[keep]
         reg = output[keep, 2:6]
         landmarks = output[keep, 6:16]
@@ -357,26 +363,19 @@ class CoreMLMTCNN(PurePythonMTCNN_Optimized):
         # Final NMS
         keep = self._nms(total_boxes, 0.7, 'Min')
         total_boxes = total_boxes[keep]
+        squared_boxes = squared_boxes[keep]
         landmarks = landmarks[keep]
 
-        # Apply calibration to bbox (C++ denormalizes landmarks using calibrated bbox)
-        # Calibration formula from C++ FaceDetectorMTCNN.cpp
-        raw_w = total_boxes[:, 2] - total_boxes[:, 0]
-        raw_h = total_boxes[:, 3] - total_boxes[:, 1]
-        cal_x = total_boxes[:, 0] + raw_w * (-0.0075)
-        cal_y = total_boxes[:, 1] + raw_h * 0.2459
-        cal_w = raw_w * 1.0323
-        cal_h = raw_h * 0.7751
+        # Denormalize landmarks using SQUARED box (the ONet input box)
+        # ONet outputs normalized landmarks relative to the 48x48 crop from squared box
+        sq_x = squared_boxes[:, 0].reshape(-1, 1)
+        sq_y = squared_boxes[:, 1].reshape(-1, 1)
+        sq_w = (squared_boxes[:, 2] - squared_boxes[:, 0]).reshape(-1, 1)
+        sq_h = (squared_boxes[:, 3] - squared_boxes[:, 1]).reshape(-1, 1)
+        landmarks[:, :, 0] = sq_x + landmarks[:, :, 0] * sq_w
+        landmarks[:, :, 1] = sq_y + landmarks[:, :, 1] * sq_h
 
-        # Denormalize landmarks using CALIBRATED bbox dimensions (matching C++)
-        cal_x_col = cal_x.reshape(-1, 1)
-        cal_y_col = cal_y.reshape(-1, 1)
-        cal_w_col = cal_w.reshape(-1, 1)
-        cal_h_col = cal_h.reshape(-1, 1)
-        landmarks[:, :, 0] = cal_x_col + landmarks[:, :, 0] * cal_w_col
-        landmarks[:, :, 1] = cal_y_col + landmarks[:, :, 1] * cal_h_col
-
-        # Convert to (x, y, width, height) format - return RAW bbox (not calibrated)
+        # Convert to (x, y, width, height) format - return RAW bbox (after regression)
         bboxes = np.zeros((total_boxes.shape[0], 4))
         bboxes[:, 0] = total_boxes[:, 0]
         bboxes[:, 1] = total_boxes[:, 1]
