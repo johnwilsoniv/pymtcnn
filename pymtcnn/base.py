@@ -320,6 +320,19 @@ class MTCNNBase(ABC):
         squared_boxes = squared_boxes[keep]
         landmarks = landmarks[keep]
 
+        # Apply final calibration to match C++ MTCNN output
+        # This converts raw ONet bbox to the tight face bbox that C++ outputs
+        w = total_boxes[:, 2] - total_boxes[:, 0]
+        h = total_boxes[:, 3] - total_boxes[:, 1]
+        new_x1 = total_boxes[:, 0] + w * -0.0075
+        new_y1 = total_boxes[:, 1] + h * 0.2459
+        new_width = w * 1.0323
+        new_height = h * 0.7751
+        total_boxes[:, 0] = new_x1
+        total_boxes[:, 1] = new_y1
+        total_boxes[:, 2] = new_x1 + new_width
+        total_boxes[:, 3] = new_y1 + new_height
+
         # Denormalize landmarks using SQUARED box (the ONet input box)
         # ONet outputs normalized landmarks relative to the 48x48 crop from squared box
         sq_x = squared_boxes[:, 0].reshape(-1, 1)
