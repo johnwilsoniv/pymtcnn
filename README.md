@@ -75,6 +75,16 @@ pip install -e .[coreml]  # or [onnx-gpu] or [onnx]
 
 ## Quick Start
 
+### Supported Input Formats
+
+PyMTCNN should be run on:
+- **Image files**: `.png`, `.jpg`, `.jpeg` (loaded with `cv2.imread()`)
+- **Video files**: `.mp4`, `.mov`, `.avi` (read with `cv2.VideoCapture()`)
+
+**Note**: The image must be in BGR format (OpenCV default). RGB images should be converted first.
+
+**Known Issue**: Interpolation differences between C++ and Python can cause slight variations in bbox detection. Both PNG files and video files work correctly. For pixel-perfect matching with C++ OpenFace, ensure consistent image decoding across implementations.
+
 ### Auto-Backend Selection (Recommended)
 
 PyMTCNN automatically selects the best available backend:
