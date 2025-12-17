@@ -10,7 +10,7 @@ long_description = (this_directory / "README.md").read_text() if (this_directory
 
 setup(
     name="pymtcnn",
-    version="1.1.0",
+    version="1.1.1",
     author="SplitFace",
     description="High-performance cross-platform MTCNN face detection with CUDA and Apple Neural Engine support",
     long_description=long_description,
