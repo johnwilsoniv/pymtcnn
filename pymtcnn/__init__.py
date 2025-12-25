@@ -39,7 +39,7 @@ License:
     CC BY-NC 4.0 (Creative Commons Attribution-NonCommercial 4.0)
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.3"
 __author__ = "SplitFace"
 __license__ = "CC BY-NC 4.0"
 

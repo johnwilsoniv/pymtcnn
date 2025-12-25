@@ -89,3 +89,6 @@ output_*.jpg
 cache/
 *.json
 detections_for_pyfaceau.json
+
+# But include CoreML model manifests
+!pymtcnn/models/*.mlpackage/Manifest.json
