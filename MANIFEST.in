@@ -9,14 +9,11 @@ recursive-include docs *.md
 # Include examples
 recursive-include examples *.py
 
-# Include CoreML models (all files in .mlpackage bundles)
-recursive-include pymtcnn/models *.mlpackage/*
-recursive-include pymtcnn/models *.mlmodel
-recursive-include pymtcnn/models *.bin
-recursive-include pymtcnn/models Manifest.json
+# Include ALL model files (ONNX and CoreML bundles)
+recursive-include pymtcnn/models *
 
-# Include ONNX models
-include pymtcnn/models/*.onnx
+# Exclude backup/test models
+prune pymtcnn/models/backup_incorrect_models
 
 # Exclude compiled Python files
 global-exclude __pycache__
