@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pymtcnn"
-version = "1.1.1"
+version = "1.1.2"
 description = "High-performance cross-platform MTCNN face detection with CUDA and Apple Neural Engine support"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -72,4 +72,8 @@ packages = ["pymtcnn", "pymtcnn.backends"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-pymtcnn = ["models/**/*", "models/*.onnx"]
+pymtcnn = [
+    "models/*.onnx",
+    "models/*_fp32.mlpackage/*",
+    "models/*_fp32.mlpackage/**/*",
+]
