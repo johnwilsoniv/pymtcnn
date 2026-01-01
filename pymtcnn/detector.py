@@ -69,7 +69,7 @@ class MTCNN:
             )
 
         if self.verbose:
-            print(f"✓ PyMTCNN initialized with {self.backend_name} backend")
+            print(f"[OK] PyMTCNN initialized with {self.backend_name} backend")
 
     def _auto_select_backend(self, model_dir, **kwargs):
         """Automatically select the best available backend."""
