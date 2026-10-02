@@ -1,19 +1,23 @@
 # Include documentation
 include README.md
+include CHANGELOG.md
 include LICENSE
 include requirements.txt
+
+# List of OpenFace files downloaded on first use (no model data)
+include pymtcnn/openface_models.json
 
 # Include documentation folder
 recursive-include docs *.md
 
-# Include examples
+# Include examples and tests
 recursive-include examples *.py
+recursive-include tests *.py
 
-# Include ALL model files (ONNX and CoreML bundles)
-recursive-include pymtcnn/models *
-
-# Exclude backup/test models
-prune pymtcnn/models/backup_incorrect_models
+# OpenFace's model files, and anything converted from them, are never
+# distributed with pymtcnn. They are downloaded and converted on first use.
+prune pymtcnn/models
+global-exclude *.onnx *.onnx.data *.mlmodel *.mlmodelc *.dat *.bin *.npy *.npz *.pt *.pth *.h5
 
 # Exclude compiled Python files
 global-exclude __pycache__

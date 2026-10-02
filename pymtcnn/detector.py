@@ -39,7 +39,8 @@ class MTCNN:
         Args:
             backend: Backend to use ('auto', 'coreml', 'onnx', 'cuda', 'cpu')
                     Default: 'auto' (automatically selects best available)
-            model_dir: Directory containing models (default: bundled models)
+            model_dir: Directory containing models (default: the models installed
+                       with `pymtcnn-download-models`, see pymtcnn.models)
             verbose: Print initialization and backend selection info
             debug_mode: Enable debug mode for stage-by-stage output capture
             **kwargs: Additional backend-specific arguments
@@ -53,20 +54,27 @@ class MTCNN:
         if backend is None:
             backend = 'auto'
         backend = backend.lower()
+        if backend not in ('auto', 'coreml', 'onnx', 'cuda', 'cpu'):
+            raise ValueError(
+                f"Invalid backend '{backend}'. "
+                f"Must be one of: auto, coreml, onnx, cuda, cpu"
+            )
+
+        # Locate the models (installed with `pymtcnn-download-models`). This never
+        # downloads without consent: if they are missing it raises
+        # ModelsNotInstalledError with instructions.
+        if model_dir is None:
+            from .models import default_model_dir
+            model_dir = str(default_model_dir())
 
         # Auto-select or validate backend
         if backend == 'auto':
             self._auto_select_backend(model_dir, **kwargs)
         elif backend == 'coreml':
             self._init_coreml_backend(model_dir, **kwargs)
-        elif backend in ['onnx', 'cuda', 'cpu']:
+        else:
             provider = None if backend == 'onnx' else backend
             self._init_onnx_backend(model_dir, provider=provider, **kwargs)
-        else:
-            raise ValueError(
-                f"Invalid backend '{backend}'. "
-                f"Must be one of: auto, coreml, onnx, cuda, cpu"
-            )
 
         if self.verbose:
             print(f"[OK] PyMTCNN initialized with {self.backend_name} backend")

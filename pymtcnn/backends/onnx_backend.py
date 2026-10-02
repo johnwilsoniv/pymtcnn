@@ -48,10 +48,10 @@ class ONNXMTCNN(MTCNNBase):
             )
 
         if model_dir is None:
-            model_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                "models"
-            )
+            # Installed with `pymtcnn-download-models`; raises ModelsNotInstalledError
+            # with instructions if the models are missing.
+            from ..models import default_model_dir
+            model_dir = str(default_model_dir())
 
         if verbose:
             print(f"Loading ONNX models from: {model_dir}")

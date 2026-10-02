@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "openface_version": "2.2.0",
+  "source": "OpenFace 2.2.0 (github.com/TadasBaltrusaitis/OpenFace, tag OpenFace_2.2.0)",
+  "license": "OpenFace license: academic or non-profit noncommercial research use only",
+  "license_url": "https://github.com/TadasBaltrusaitis/OpenFace/blob/master/OpenFace-license.txt",
+  "note": "pymtcnn does not include these files. They are downloaded from OpenFace's official repository, checked against these SHA-256 values, stored in the shared cache under originals/<path>, and converted into derived/pymtcnn/<converter version>/.",
+  "files": [
+    {
+      "path": "lib/local/LandmarkDetector/model/mtcnn_detector/PNet.dat",
+      "urls": [
+        "https://raw.githubusercontent.com/TadasBaltrusaitis/OpenFace/OpenFace_2.2.0/lib/local/LandmarkDetector/model/mtcnn_detector/PNet.dat"
+      ],
+      "sha256": "22dfd0a96ec983e99b21c0e214d89d55ea9a471eedd53e5a48203f22bcb4c489",
+      "size": 35088
+    },
+    {
+      "path": "lib/local/LandmarkDetector/model/mtcnn_detector/RNet.dat",
+      "urls": [
+        "https://raw.githubusercontent.com/TadasBaltrusaitis/OpenFace/OpenFace_2.2.0/lib/local/LandmarkDetector/model/mtcnn_detector/RNet.dat"
+      ],
+      "sha256": "95e9c4203ca0a08c84520fa5fd658834213ed2453a7359f4d9514a06762f91e9",
+      "size": 454912
+    },
+    {
+      "path": "lib/local/LandmarkDetector/model/mtcnn_detector/ONet.dat",
+      "urls": [
+        "https://raw.githubusercontent.com/TadasBaltrusaitis/OpenFace/OpenFace_2.2.0/lib/local/LandmarkDetector/model/mtcnn_detector/ONet.dat"
+      ],
+      "sha256": "4c853ae5b461abe4d41f1cd77625895cd71452956c63c622fd75a3b820fb1d31",
+      "size": 1729592
+    }
+  ]
+}

@@ -42,10 +42,10 @@ class CoreMLMTCNN(MTCNNBase):
             )
 
         if coreml_dir is None:
-            coreml_dir = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)),
-                "models"
-            )
+            # Installed with `pymtcnn-download-models`; raises ModelsNotInstalledError
+            # with instructions if the models are missing.
+            from ..models import default_model_dir
+            coreml_dir = str(default_model_dir())
 
         if verbose:
             print(f"Loading CoreML models from: {coreml_dir}")

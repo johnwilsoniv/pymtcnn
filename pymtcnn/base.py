@@ -504,10 +504,9 @@ class PurePythonMTCNN(MTCNNBase):
             )
 
         if model_dir is None:
-            model_dir = os.path.expanduser(
-                "~/repo/fea_tool/external_libs/openFace/OpenFace/matlab_version/"
-                "face_detection/mtcnn/convert_to_cpp/"
-            )
+            # OpenFace's original .dat files, installed with `pymtcnn-download-models`.
+            from .models import openface_mtcnn_dir
+            model_dir = str(openface_mtcnn_dir())
 
         # Load Pure Python CNNs
         self.pnet = CPPCNN(os.path.join(model_dir, "PNet.dat"))

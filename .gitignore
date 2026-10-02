@@ -90,5 +90,26 @@ cache/
 *.json
 detections_for_pyfaceau.json
 
-# But include CoreML model manifests
-!pymtcnn/models/*.mlpackage/Manifest.json
+# But include the list of OpenFace files that pymtcnn downloads
+!pymtcnn/openface_models.json
+
+# Model files are never committed: OpenFace's license does not allow
+# redistributing its models or anything converted from them. pymtcnn
+# downloads and converts them on each user's computer.
+*.onnx
+*.onnx.data
+*.mlmodel
+*.mlpackage/
+*.mlmodelc/
+*.dat
+*.npy
+*.npz
+*.pt
+*.pth
+*.h5
+weight.bin
+pymtcnn/models/
+OpenFaceModels/
+
+# Local tool settings
+.claude/
