@@ -26,7 +26,7 @@ class MTCNN:
     """
     Unified MTCNN face detector with automatic backend selection.
 
-    Automatically selects the best available backend:
+    Automatically selects the best available backend that loads and runs here:
     1. CoreML (if on macOS and coremltools available)
     2. ONNX with CUDA (if NVIDIA GPU available)
     3. ONNX with CPU (fallback)
@@ -80,12 +80,20 @@ class MTCNN:
             print(f"[OK] PyMTCNN initialized with {self.backend_name} backend")
 
     def _auto_select_backend(self, model_dir, **kwargs):
-        """Automatically select the best available backend."""
+        """Automatically select the best available backend that loads and runs.
+
+        Candidates, in order: CoreML (macOS), ONNX with automatic provider
+        selection (CUDA / CoreML execution provider / CPU), ONNX on the CPU.
+        A candidate is used only if it loads the models and runs all three
+        networks once (see _check_backend_runs).
+        """
+        failures = []
 
         # Priority 1: CoreML on macOS (fastest on Apple Silicon)
         if platform.system() == 'Darwin':
             try:
                 self._init_coreml_backend(model_dir, **kwargs)
+                self._check_backend_runs()
                 if self.verbose:
                     print("Auto-selected: CoreML (Apple Neural Engine)")
                 return
@@ -93,30 +101,55 @@ class MTCNN:
                 if self.verbose:
                     print("CoreML not available (coremltools not installed)")
             except Exception as e:
+                failures.append(f"CoreML: {e}")
                 if self.verbose:
                     print(f"CoreML initialization failed: {e}")
 
-        # Priority 2: ONNX (with automatic CUDA/CPU selection)
-        try:
-            self._init_onnx_backend(model_dir, provider=None, **kwargs)
+        # Priority 2: ONNX (with automatic CUDA/CoreML/CPU selection); then ONNX on
+        # the CPU alone, in case an accelerated provider loads but cannot run.
+        for provider in (None, 'cpu'):
+            try:
+                self._init_onnx_backend(model_dir, provider=provider, **kwargs)
+                self._check_backend_runs()
+            except ImportError:
+                raise RuntimeError(
+                    "No compatible backend found. Please install:\n"
+                    "  - macOS: pip install pymtcnn[coreml]\n"
+                    "  - NVIDIA GPU: pip install pymtcnn[onnx-gpu]\n"
+                    "  - CPU: pip install pymtcnn[onnx]"
+                )
+            except Exception as e:
+                failures.append(f"ONNX ({provider or 'automatic provider'}): {e}")
+                if self.verbose:
+                    print(f"ONNX initialization failed: {e}")
+                continue
             if self.verbose:
-                provider = self._detector.get_active_provider()
-                if 'CUDA' in provider:
+                active = self._detector.get_active_provider()
+                if 'CUDA' in active:
                     print("Auto-selected: ONNX with CUDA")
-                elif 'CoreML' in provider:
+                elif 'CoreML' in active:
                     print("Auto-selected: ONNX with CoreML Execution Provider")
                 else:
                     print("Auto-selected: ONNX with CPU")
             return
-        except ImportError:
-            raise RuntimeError(
-                "No compatible backend found. Please install:\n"
-                "  - macOS: pip install pymtcnn[coreml]\n"
-                "  - NVIDIA GPU: pip install pymtcnn[onnx-gpu]\n"
-                "  - CPU: pip install pymtcnn[onnx]"
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize any backend: {e}")
+
+        self._detector = None
+        raise RuntimeError("Failed to initialize any backend: " + "; ".join(failures))
+
+    def _check_backend_runs(self):
+        """Run each network once on a blank input; raise if the backend cannot run here."""
+        import numpy as np
+
+        detector = self._detector
+        outputs = (
+            detector._run_pnet(np.zeros((3, 12, 12), dtype=np.float32)),
+            detector._run_rnet_batch([np.zeros((3, 24, 24), dtype=np.float32)]),
+            detector._run_onet_batch([np.zeros((3, 48, 48), dtype=np.float32)]),
+        )
+        for output, shape in zip(outputs, ((1, 6, 1, 1), (1, 6), (1, 16))):
+            output = np.asarray(output)
+            if output.shape != shape or not np.all(np.isfinite(output)):
+                raise RuntimeError(f"{self.backend_name} produced invalid output (shape {output.shape})")
 
     def _init_coreml_backend(self, model_dir, **kwargs):
         """Initialize CoreML backend."""

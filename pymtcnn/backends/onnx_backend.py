@@ -63,27 +63,33 @@ class ONNXMTCNN(MTCNNBase):
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        self.pnet = ort.InferenceSession(
-            os.path.join(model_dir, "pnet.onnx"),
-            sess_options=sess_options,
-            providers=providers
-        )
-        self.rnet = ort.InferenceSession(
-            os.path.join(model_dir, "rnet.onnx"),
-            sess_options=sess_options,
-            providers=providers
-        )
-        self.onet = ort.InferenceSession(
-            os.path.join(model_dir, "onet.onnx"),
-            sess_options=sess_options,
-            providers=providers
-        )
+        self.pnet = self._create_session(os.path.join(model_dir, "pnet.onnx"), sess_options,
+                                         providers, provider, verbose)
+        self.rnet = self._create_session(os.path.join(model_dir, "rnet.onnx"), sess_options,
+                                         providers, provider, verbose)
+        self.onet = self._create_session(os.path.join(model_dir, "onet.onnx"), sess_options,
+                                         providers, provider, verbose)
 
         # Store active provider
         self._active_provider = self.pnet.get_providers()[0]
 
         if verbose:
             print(f"ONNX models loaded with provider: {self._active_provider}")
+
+    @staticmethod
+    def _create_session(path, sess_options, providers, requested, verbose):
+        """Create a session; with automatic provider selection, fall back to CPU
+        if an accelerated provider cannot load the model (e.g. ONNX Runtime's
+        CoreML provider on some macOS versions)."""
+        try:
+            return ort.InferenceSession(path, sess_options=sess_options, providers=providers)
+        except Exception as e:
+            if requested is not None or providers == ['CPUExecutionProvider']:
+                raise
+            if verbose:
+                print(f"{providers[0]} could not load {os.path.basename(path)} ({e}); using CPU")
+            return ort.InferenceSession(path, sess_options=sess_options,
+                                        providers=['CPUExecutionProvider'])
 
     def _get_providers(self, provider, verbose):
         """Get list of execution providers based on preference."""
